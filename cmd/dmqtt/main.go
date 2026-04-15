@@ -2,20 +2,29 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/langzp/dmqtt/config"
+	"github.com/langzp/dmqtt/internal/broker"
 )
 
 func main() {
 	cfg := config.DefaultConfig()
-	fmt.Printf("DMQTT starting on %s\n", cfg.TCPAddr)
 
-	// Wait for shutdown signal
+	b := broker.New(cfg.TCPAddr)
+	if err := b.Start(); err != nil {
+		log.Fatalf("Failed to start broker: %v", err)
+	}
+	fmt.Printf("DMQTT listening on %s\n", b.Addr())
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	fmt.Println("DMQTT shutting down")
+
+	fmt.Println("DMQTT shutting down...")
+	b.Stop()
+	fmt.Println("DMQTT stopped")
 }

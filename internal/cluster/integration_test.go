@@ -167,3 +167,141 @@ func TestIntegration_ForwardedMessageNotReforwarded(t *testing.T) {
 		t.Error("Original message should not have Forwarded set")
 	}
 }
+
+func TestIntegration_ConnectionGossip(t *testing.T) {
+	cfg1 := ClusterConfig{
+		NodeID:        "node-1",
+		Host:          "127.0.0.1",
+		GossipPort:    20007,
+		TransportPort: 21007,
+		MQTTPort:      1883,
+		VirtualNodes:  150,
+		ReplicaCount:  3,
+	}
+
+	c1, err := NewCluster(cfg1)
+	if err != nil {
+		t.Fatalf("NewCluster node-1: %v", err)
+	}
+	defer c1.Stop()
+
+	cfg2 := ClusterConfig{
+		NodeID:        "node-2",
+		Host:          "127.0.0.1",
+		GossipPort:    20008,
+		TransportPort: 21008,
+		MQTTPort:      1884,
+		Seeds:         []string{"127.0.0.1:20007"},
+		VirtualNodes:  150,
+		ReplicaCount:  3,
+	}
+
+	c2, err := NewCluster(cfg2)
+	if err != nil {
+		t.Fatalf("NewCluster node-2: %v", err)
+	}
+	defer c2.Stop()
+
+	// Wait for cluster to stabilize
+	time.Sleep(2 * time.Second)
+
+	// Node-1 broadcasts a connection
+	c1.BroadcastConnect("device-A")
+
+	// Wait for gossip propagation
+	time.Sleep(3 * time.Second)
+
+	// Node-2 should see device-A connected to node-1
+	nodeID, ok := c2.Connections().Lookup("device-A")
+	if !ok {
+		t.Fatal("expected device-A in node-2's connection index")
+	}
+	if nodeID != "node-1" {
+		t.Errorf("nodeID = %s, want node-1", nodeID)
+	}
+
+	// Node-1 broadcasts a disconnection
+	c1.BroadcastDisconnect("device-A")
+
+	time.Sleep(3 * time.Second)
+
+	_, ok = c2.Connections().Lookup("device-A")
+	if ok {
+		t.Error("expected device-A to be removed from node-2's connection index")
+	}
+}
+
+func TestIntegration_RemoteConnectCallback(t *testing.T) {
+	cfg1 := ClusterConfig{
+		NodeID:        "node-1",
+		Host:          "127.0.0.1",
+		GossipPort:    20009,
+		TransportPort: 21009,
+		MQTTPort:      1883,
+		VirtualNodes:  150,
+		ReplicaCount:  3,
+	}
+
+	c1, err := NewCluster(cfg1)
+	if err != nil {
+		t.Fatalf("NewCluster node-1: %v", err)
+	}
+	defer c1.Stop()
+
+	cfg2 := ClusterConfig{
+		NodeID:        "node-2",
+		Host:          "127.0.0.1",
+		GossipPort:    20010,
+		TransportPort: 21010,
+		MQTTPort:      1884,
+		Seeds:         []string{"127.0.0.1:20009"},
+		VirtualNodes:  150,
+		ReplicaCount:  3,
+	}
+
+	c2, err := NewCluster(cfg2)
+	if err != nil {
+		t.Fatalf("NewCluster node-2: %v", err)
+	}
+	defer c2.Stop()
+
+	// Wait for cluster to stabilize
+	time.Sleep(2 * time.Second)
+
+	// Set up remote connect handler on node-1
+	var takeover struct {
+		mu       sync.Mutex
+		deviceID string
+		nodeID   string
+	}
+	done := make(chan struct{})
+	var once sync.Once
+
+	c1.SetRemoteConnectHandler(func(deviceID, nodeID string) {
+		takeover.mu.Lock()
+		takeover.deviceID = deviceID
+		takeover.nodeID = nodeID
+		takeover.mu.Unlock()
+		once.Do(func() {
+			close(done)
+		})
+	})
+
+	// Node-2 broadcasts a connect for device-A
+	c2.BroadcastConnect("device-A")
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for remote connect callback")
+	}
+
+	takeover.mu.Lock()
+	defer takeover.mu.Unlock()
+	if takeover.deviceID != "device-A" {
+		t.Errorf("deviceID = %s, want device-A", takeover.deviceID)
+	}
+	if takeover.nodeID != "node-2" {
+		t.Errorf("nodeID = %s, want node-2", takeover.nodeID)
+	}
+}

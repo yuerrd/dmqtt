@@ -16,6 +16,7 @@ type Client struct {
 	conn      net.Conn
 	broker    *Broker
 	clientID  string
+	username  string
 	will      *WillMessage
 	packetIDs *PacketIDAllocator
 	inflight  *InflightStore
@@ -104,6 +105,15 @@ func (c *Client) handleConnect() error {
 		pkt.ClientID = fmt.Sprintf("auto-%p", c.conn)
 	}
 
+	if !c.broker.authenticator.Authenticate(pkt.Username, pkt.Password) {
+		connack := &codec.ConnackPacket{ReturnCode: codec.ConnackBadUsernameOrPassword}
+		c.send(connack.Encode())
+		metrics.AuthAttempt("failure")
+		return fmt.Errorf("authentication failed for user %q", pkt.Username)
+	}
+	metrics.AuthAttempt("success")
+	c.username = pkt.Username
+
 	c.clientID = pkt.ClientID
 
 	c.broker.disconnectExisting(c.clientID)
@@ -176,6 +186,11 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		c.send(pubrec.Encode())
 	}
 
+	if !c.broker.authorizer.Authorize(c.username, pkt.Topic, "publish") {
+		metrics.ACLDenial("publish")
+		return
+	}
+
 	metrics.MessagePublished(fh.QoS)
 
 	if fh.Retain {
@@ -222,7 +237,7 @@ func (c *Client) handlePubcomp(data []byte) {
 
 func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
 	metrics.MessageDelivered(qos)
-	
+
 	pkt := &codec.PublishPacket{
 		Topic:   topic,
 		Payload: payload,
@@ -259,6 +274,12 @@ func (c *Client) handleSubscribe(data []byte) {
 
 	for i, sub := range pkt.Subscriptions {
 		if !TopicFilterValid(sub.TopicFilter) {
+			returnCodes[i] = 0x80
+			continue
+		}
+
+		if !c.broker.authorizer.Authorize(c.username, sub.TopicFilter, "subscribe") {
+			metrics.ACLDenial("subscribe")
 			returnCodes[i] = 0x80
 			continue
 		}

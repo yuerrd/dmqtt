@@ -588,4 +588,3 @@ func TestBroker_PersistentSessionRecovery(t *testing.T) {
 	}
 	sub2.SetReadDeadline(time.Time{})
 }
-

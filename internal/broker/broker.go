@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/metrics"
 	"github.com/langzp/dmqtt/internal/storage"
@@ -23,6 +24,8 @@ type Broker struct {
 	offlineStore  *OfflineStore
 	store         storage.Store
 	cluster       *cluster.Cluster
+	authenticator auth.Authenticator
+	authorizer    auth.Authorizer
 
 	inflightLimit int
 
@@ -33,6 +36,7 @@ type Broker struct {
 }
 
 func New(addr string, store storage.Store) *Broker {
+	noop := &auth.NoopAuth{}
 	return &Broker{
 		addr:          addr,
 		subscriptions: NewSubscriptionIndex(),
@@ -41,6 +45,8 @@ func New(addr string, store storage.Store) *Broker {
 		dedupStore:    NewDedupStore(180 * time.Second),
 		offlineStore:  NewOfflineStore(1000, 24*time.Hour),
 		store:         store,
+		authenticator: noop,
+		authorizer:    noop,
 		inflightLimit: 20,
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
@@ -76,11 +82,11 @@ func (b *Broker) Start() error {
 	if err != nil {
 		return err
 	}
-	
+
 	b.mu.Lock()
 	b.listener = l
 	b.mu.Unlock()
-	
+
 	slog.Info("DMQTT listening", "addr", l.Addr())
 
 	for {
@@ -102,11 +108,11 @@ func (b *Broker) Start() error {
 
 func (b *Broker) Stop() {
 	close(b.done)
-	
+
 	b.mu.Lock()
 	listener := b.listener
 	b.mu.Unlock()
-	
+
 	if listener != nil {
 		listener.Close()
 	}
@@ -121,7 +127,7 @@ func (b *Broker) Stop() {
 func (b *Broker) Addr() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	
+
 	if b.listener == nil {
 		return ""
 	}
@@ -146,6 +152,13 @@ func (b *Broker) SetCluster(c *cluster.Cluster) {
 			return b.ConnectedClientIDs()
 		})
 	}
+}
+
+// SetAuth sets the authentication and authorization providers.
+// Must be called before Start(). If not called, NoopAuth is used.
+func (b *Broker) SetAuth(authn auth.Authenticator, authz auth.Authorizer) {
+	b.authenticator = authn
+	b.authorizer = authz
 }
 
 // Cluster returns the attached cluster, or nil if standalone.

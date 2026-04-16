@@ -49,6 +49,14 @@ var (
 		Name: "mqtt_cluster_nodes",
 		Help: "Number of nodes in the cluster (0 if standalone).",
 	})
+	authAttempts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "mqtt_auth_attempts_total",
+		Help: "Total authentication attempts.",
+	}, []string{"result"})
+	aclDenials = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "mqtt_acl_denials_total",
+		Help: "Total ACL authorization denials.",
+	}, []string{"action"})
 )
 
 func init() {
@@ -63,6 +71,8 @@ func init() {
 		retainedMessages,
 		goroutines,
 		clusterNodes,
+		authAttempts,
+		aclDenials,
 	)
 }
 
@@ -86,6 +96,14 @@ func MessageDelivered(qos byte) {
 
 func MessageForwarded() {
 	messagesForwarded.Inc()
+}
+
+func AuthAttempt(result string) {
+	authAttempts.WithLabelValues(result).Inc()
+}
+
+func ACLDenial(action string) {
+	aclDenials.WithLabelValues(action).Inc()
 }
 
 func SetSubscriptions(n int) {

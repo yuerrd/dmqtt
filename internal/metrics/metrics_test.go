@@ -80,9 +80,9 @@ type mockProvider struct {
 	cluster int
 }
 
-func (m *mockProvider) ActiveSubscriptions() int { return m.subs }
+func (m *mockProvider) ActiveSubscriptions() int  { return m.subs }
 func (m *mockProvider) RetainedMessageCount() int { return m.retain }
-func (m *mockProvider) ClusterNodeCount() int { return m.cluster }
+func (m *mockProvider) ClusterNodeCount() int     { return m.cluster }
 
 func TestCollect(t *testing.T) {
 	p := &mockProvider{subs: 42, retain: 5, cluster: 3}
@@ -99,5 +99,36 @@ func TestCollect(t *testing.T) {
 	}
 	if v := gaugeValue(goroutines); v <= 0 {
 		t.Errorf("goroutines = %v, want > 0", v)
+	}
+}
+
+func TestAuthAttemptMetric(t *testing.T) {
+	AuthAttempt("success")
+	AuthAttempt("failure")
+	AuthAttempt("failure")
+
+	m := &dto.Metric{}
+	authAttempts.WithLabelValues("success").Write(m)
+	if m.Counter.GetValue() < 1 {
+		t.Error("expected success counter >= 1")
+	}
+	authAttempts.WithLabelValues("failure").Write(m)
+	if m.Counter.GetValue() < 2 {
+		t.Error("expected failure counter >= 2")
+	}
+}
+
+func TestACLDenialMetric(t *testing.T) {
+	ACLDenial("publish")
+	ACLDenial("subscribe")
+
+	m := &dto.Metric{}
+	aclDenials.WithLabelValues("publish").Write(m)
+	if m.Counter.GetValue() < 1 {
+		t.Error("expected publish denial counter >= 1")
+	}
+	aclDenials.WithLabelValues("subscribe").Write(m)
+	if m.Counter.GetValue() < 1 {
+		t.Error("expected subscribe denial counter >= 1")
 	}
 }

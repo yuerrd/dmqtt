@@ -2,7 +2,10 @@ module github.com/langzp/dmqtt
 
 go 1.25.6
 
-require github.com/cockroachdb/pebble v1.1.5
+require (
+	github.com/cockroachdb/pebble v1.1.5
+	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b
+)
 
 require (
 	github.com/DataDog/zstd v1.5.2 // indirect

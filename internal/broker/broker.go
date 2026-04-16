@@ -1,10 +1,12 @@
 package broker
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
 
@@ -17,6 +19,8 @@ type Broker struct {
 	retainStore   *RetainStore
 	dedupStore    *DedupStore
 	offlineStore  *OfflineStore
+	store         storage.Store
+
 	inflightLimit int
 
 	mu      sync.RWMutex
@@ -25,21 +29,46 @@ type Broker struct {
 	done chan struct{}
 }
 
-func New(addr string) *Broker {
+func New(addr string, store storage.Store) *Broker {
 	return &Broker{
 		addr:          addr,
 		subscriptions: NewSubscriptionIndex(),
-		sessions:      NewSessionStore(),
-		retainStore:   NewRetainStore(),
+		sessions:      NewSessionStore(store),
+		retainStore:   NewRetainStore(store),
 		dedupStore:    NewDedupStore(180 * time.Second),
 		offlineStore:  NewOfflineStore(1000, 24*time.Hour),
+		store:         store,
 		inflightLimit: 20,
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
 	}
 }
 
+func (b *Broker) loadFromStorage() error {
+	if err := b.sessions.Load(); err != nil {
+		return fmt.Errorf("loading sessions: %w", err)
+	}
+	if err := b.retainStore.Load(); err != nil {
+		return fmt.Errorf("loading retained messages: %w", err)
+	}
+	// Restore subscriptions from loaded sessions
+	b.sessions.mu.RLock()
+	for clientID, session := range b.sessions.sessions {
+		if !session.CleanSession {
+			for filter, qos := range session.Subscriptions {
+				b.subscriptions.Add(clientID, filter, qos)
+			}
+		}
+	}
+	b.sessions.mu.RUnlock()
+	return nil
+}
+
 func (b *Broker) Start() error {
+	if err := b.loadFromStorage(); err != nil {
+		return err
+	}
+
 	l, err := transport.NewTCPListener(b.addr)
 	if err != nil {
 		return err

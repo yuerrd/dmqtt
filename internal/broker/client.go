@@ -264,6 +264,8 @@ func (c *Client) handleSubscribe(data []byte) {
 		returnCodes[i] = grantedQoS
 	}
 
+	c.broker.sessions.Save(c.clientID)
+
 	suback := &codec.SubackPacket{
 		PacketID:    pkt.PacketID,
 		ReturnCodes: returnCodes,
@@ -299,6 +301,8 @@ func (c *Client) handleUnsubscribe(data []byte) {
 			delete(session.Subscriptions, filter)
 		}
 	}
+
+	c.broker.sessions.Save(c.clientID)
 
 	unsuback := &codec.UnsubackPacket{PacketID: pkt.PacketID}
 	c.send(unsuback.Encode())

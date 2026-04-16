@@ -109,7 +109,7 @@ func writeUTF8(buf *bytes.Buffer, s string) {
 }
 
 func TestBroker_ConnectDisconnect(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)
@@ -121,7 +121,7 @@ func TestBroker_ConnectDisconnect(t *testing.T) {
 }
 
 func TestBroker_PubSubQoS0(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)
@@ -149,7 +149,7 @@ func TestBroker_PubSubQoS0(t *testing.T) {
 }
 
 func TestBroker_WildcardSubscription(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)
@@ -174,7 +174,7 @@ func TestBroker_WildcardSubscription(t *testing.T) {
 }
 
 func TestBroker_MultipleSubscribers(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)
@@ -209,7 +209,7 @@ func TestBroker_MultipleSubscribers(t *testing.T) {
 }
 
 func TestBroker_Pingreq(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)
@@ -231,7 +231,7 @@ func TestBroker_Pingreq(t *testing.T) {
 }
 
 func TestBroker_RetainMessage(t *testing.T) {
-	b := New(":0")
+	b := New(":0", nil)
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)

@@ -1,12 +1,14 @@
 package broker
 
-import "sync"
+import (
+	"encoding/base64"
+	"encoding/json"
+	"log"
+	"strings"
+	"sync"
 
-// RetainStore stores the latest retained message per topic.
-type RetainStore struct {
-	mu       sync.RWMutex
-	messages map[string]*retainedMessage
-}
+	"github.com/langzp/dmqtt/internal/storage"
+)
 
 type retainedMessage struct {
 	Topic   string
@@ -14,10 +16,49 @@ type retainedMessage struct {
 	QoS     byte
 }
 
-func NewRetainStore() *RetainStore {
+type retainedJSON struct {
+	Payload string `json:"payload"` // base64-encoded
+	QoS     byte   `json:"qos"`
+}
+
+// RetainStore stores the latest retained message per topic.
+type RetainStore struct {
+	mu       sync.RWMutex
+	messages map[string]*retainedMessage
+	store    storage.Store
+}
+
+func NewRetainStore(store storage.Store) *RetainStore {
 	return &RetainStore{
 		messages: make(map[string]*retainedMessage),
+		store:    store,
 	}
+}
+
+// Load restores retained messages from persistent storage.
+func (rs *RetainStore) Load() error {
+	if rs.store == nil {
+		return nil
+	}
+	return rs.store.Scan([]byte("r/"), func(key, value []byte) error {
+		var rj retainedJSON
+		if err := json.Unmarshal(value, &rj); err != nil {
+			log.Printf("skipping corrupt retained key=%s: %v", key, err)
+			return nil
+		}
+		topic := strings.TrimPrefix(string(key), "r/")
+		payload, err := base64.StdEncoding.DecodeString(rj.Payload)
+		if err != nil {
+			log.Printf("skipping corrupt retained payload key=%s: %v", key, err)
+			return nil
+		}
+		rs.messages[topic] = &retainedMessage{
+			Topic:   topic,
+			Payload: payload,
+			QoS:     rj.QoS,
+		}
+		return nil
+	})
 }
 
 // Set stores or updates a retained message.
@@ -28,6 +69,9 @@ func (rs *RetainStore) Set(topic string, payload []byte, qos byte) {
 
 	if len(payload) == 0 {
 		delete(rs.messages, topic)
+		if rs.store != nil {
+			rs.store.Delete([]byte("r/" + topic))
+		}
 		return
 	}
 
@@ -35,6 +79,14 @@ func (rs *RetainStore) Set(topic string, payload []byte, qos byte) {
 		Topic:   topic,
 		Payload: payload,
 		QoS:     qos,
+	}
+
+	if rs.store != nil {
+		data, _ := json.Marshal(retainedJSON{
+			Payload: base64.StdEncoding.EncodeToString(payload),
+			QoS:     qos,
+		})
+		rs.store.Set([]byte("r/"+topic), data)
 	}
 }
 

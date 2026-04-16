@@ -14,7 +14,7 @@ import (
 func main() {
 	cfg := config.DefaultConfig()
 
-	b := broker.New(cfg.TCPAddr)
+	b := broker.New(cfg.TCPAddr, nil)
 	if err := b.Start(); err != nil {
 		log.Fatalf("Failed to start broker: %v", err)
 	}

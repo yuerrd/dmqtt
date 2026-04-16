@@ -147,3 +147,14 @@ func (idx *SubscriptionIndex) Match(topic string) []SubscriptionMatch {
 	}
 	return result
 }
+
+// Count returns the total number of active subscriptions.
+func (idx *SubscriptionIndex) Count() int {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	count := 0
+	for _, subs := range idx.filters {
+		count += len(subs)
+	}
+	return count
+}

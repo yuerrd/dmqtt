@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/langzp/dmqtt/internal/codec"
+	"github.com/langzp/dmqtt/internal/metrics"
 )
 
 // Client represents a connected MQTT client.
@@ -133,6 +134,8 @@ func (c *Client) handleConnect() error {
 		c.broker.cluster.BroadcastConnect(c.clientID)
 	}
 
+	metrics.ConnectionOpened()
+
 	connack := &codec.ConnackPacket{
 		SessionPresent: sessionPresent,
 		ReturnCode:     codec.ConnackAccepted,
@@ -172,6 +175,8 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		pubrec := &codec.PubrecPacket{PacketID: pkt.PacketID}
 		c.send(pubrec.Encode())
 	}
+
+	metrics.MessagePublished(fh.QoS)
 
 	if fh.Retain {
 		c.broker.retainStore.Set(pkt.Topic, pkt.Payload, fh.QoS)
@@ -216,6 +221,8 @@ func (c *Client) handlePubcomp(data []byte) {
 }
 
 func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
+	metrics.MessageDelivered(qos)
+	
 	pkt := &codec.PublishPacket{
 		Topic:   topic,
 		Payload: payload,
@@ -345,6 +352,8 @@ func (c *Client) close() {
 		if c.broker.cluster != nil {
 			c.broker.cluster.BroadcastDisconnect(c.clientID)
 		}
+
+		metrics.ConnectionClosed()
 
 		if c.will != nil {
 			if c.will.Retain {

@@ -103,3 +103,10 @@ func (rs *RetainStore) Match(filter string) []retainedMessage {
 	}
 	return result
 }
+
+// Count returns the number of retained messages.
+func (rs *RetainStore) Count() int {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	return len(rs.messages)
+}

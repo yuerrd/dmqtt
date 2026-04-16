@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/langzp/dmqtt/internal/cluster"
+	"github.com/langzp/dmqtt/internal/metrics"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
@@ -219,6 +220,7 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 				QoS:     effectiveQoS,
 				Retain:  retain,
 			})
+			metrics.MessageForwarded()
 		}
 	}
 }
@@ -238,4 +240,29 @@ func (b *Broker) ConnectedClientIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// ActiveSubscriptions returns the total number of active subscriptions.
+func (b *Broker) ActiveSubscriptions() int {
+	return b.subscriptions.Count()
+}
+
+// RetainedMessageCount returns the number of retained messages.
+func (b *Broker) RetainedMessageCount() int {
+	return b.retainStore.Count()
+}
+
+// ClusterNodeCount returns the number of cluster nodes, or 0 if standalone.
+func (b *Broker) ClusterNodeCount() int {
+	if b.cluster != nil {
+		return b.cluster.Size()
+	}
+	return 0
+}
+
+// IsReady returns true if the broker is accepting connections.
+func (b *Broker) IsReady() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.listener != nil
 }

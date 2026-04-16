@@ -9,6 +9,7 @@ import (
 
 	"github.com/langzp/dmqtt/config"
 	"github.com/langzp/dmqtt/internal/broker"
+	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/storage"
 )
 
@@ -29,6 +30,35 @@ func main() {
 	}
 
 	b := broker.New(cfg.TCPAddr, store)
+
+	if cfg.Cluster.Enabled {
+		clusterCfg := cluster.ClusterConfig{
+			Enabled:      true,
+			Name:         cfg.Cluster.Name,
+			NodeID:       cfg.Cluster.NodeID,
+			Host:         cfg.Cluster.Host,
+			GossipPort:   cfg.Cluster.GossipPort,
+			MQTTPort:     1883,
+			Seeds:        cfg.Cluster.Seeds,
+			VirtualNodes: cfg.Cluster.VirtualNodes,
+			ReplicaCount: cfg.Cluster.ReplicaCount,
+		}
+
+		c, err := cluster.NewCluster(clusterCfg)
+		if err != nil {
+			log.Fatalf("Failed to create cluster: %v", err)
+		}
+		b.SetCluster(c)
+		log.Printf("Cluster mode: node %s, gossip on :%d", cfg.Cluster.NodeID, cfg.Cluster.GossipPort)
+
+		defer func() {
+			log.Println("Leaving cluster...")
+			c.Stop()
+		}()
+	} else {
+		log.Println("Running in standalone mode (no cluster)")
+	}
+
 	if err := b.Start(); err != nil {
 		log.Fatalf("Failed to start broker: %v", err)
 	}

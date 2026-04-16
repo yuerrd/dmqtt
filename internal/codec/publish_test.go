@@ -101,3 +101,66 @@ func TestPubackEncodeDecode(t *testing.T) {
 		t.Errorf("PacketID = %d, want 42", decoded.PacketID)
 	}
 }
+
+func TestPubrecPacket_EncodeDecode(t *testing.T) {
+	pkt := &PubrecPacket{PacketID: 42}
+	data := pkt.Encode()
+
+	// PUBREC is type 5 (0x50), with 2 bytes remaining
+	if data[0] != 0x50 {
+		t.Errorf("First byte = 0x%02X, want 0x50", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+
+	decoded, err := DecodePubrecPacket(data[2:])
+	if err != nil {
+		t.Fatalf("DecodePubrecPacket error: %v", err)
+	}
+	if decoded.PacketID != 42 {
+		t.Errorf("PacketID = %d, want 42", decoded.PacketID)
+	}
+}
+
+func TestPubrelPacket_EncodeDecode(t *testing.T) {
+	pkt := &PubrelPacket{PacketID: 100}
+	data := pkt.Encode()
+
+	// PUBREL is type 6 (0x60) with flags 0x02, so first byte is 0x62
+	if data[0] != 0x62 {
+		t.Errorf("First byte = 0x%02X, want 0x62", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+
+	decoded, err := DecodePubrelPacket(data[2:])
+	if err != nil {
+		t.Fatalf("DecodePubrelPacket error: %v", err)
+	}
+	if decoded.PacketID != 100 {
+		t.Errorf("PacketID = %d, want 100", decoded.PacketID)
+	}
+}
+
+func TestPubcompPacket_EncodeDecode(t *testing.T) {
+	pkt := &PubcompPacket{PacketID: 65535}
+	data := pkt.Encode()
+
+	// PUBCOMP is type 7 (0x70)
+	if data[0] != 0x70 {
+		t.Errorf("First byte = 0x%02X, want 0x70", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+
+	decoded, err := DecodePubcompPacket(data[2:])
+	if err != nil {
+		t.Fatalf("DecodePubcompPacket error: %v", err)
+	}
+	if decoded.PacketID != 65535 {
+		t.Errorf("PacketID = %d, want 65535", decoded.PacketID)
+	}
+}

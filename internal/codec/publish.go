@@ -95,3 +95,61 @@ func DecodePubackPacket(data []byte) (*PubackPacket, error) {
 		PacketID: binary.BigEndian.Uint16(data[:2]),
 	}, nil
 }
+
+// PubrecPacket represents an MQTT PUBREC packet (QoS 2, step 2).
+type PubrecPacket struct {
+	PacketID uint16
+}
+
+func (p *PubrecPacket) Encode() []byte {
+	fh := FixedHeader{PacketType: PUBREC, RemainingLength: 2}
+	buf := fh.Encode()
+	buf = append(buf, byte(p.PacketID>>8), byte(p.PacketID))
+	return buf
+}
+
+func DecodePubrecPacket(data []byte) (*PubrecPacket, error) {
+	if len(data) < 2 {
+		return nil, &ErrMalformedPacket{Reason: "PUBREC packet too short"}
+	}
+	return &PubrecPacket{PacketID: binary.BigEndian.Uint16(data[:2])}, nil
+}
+
+// PubrelPacket represents an MQTT PUBREL packet (QoS 2, step 3).
+type PubrelPacket struct {
+	PacketID uint16
+}
+
+func (p *PubrelPacket) Encode() []byte {
+	// PUBREL requires fixed header flags 0x02 per MQTT 3.1.1 spec
+	fh := FixedHeader{PacketType: PUBREL, QoS: 1, RemainingLength: 2}
+	buf := fh.Encode()
+	buf = append(buf, byte(p.PacketID>>8), byte(p.PacketID))
+	return buf
+}
+
+func DecodePubrelPacket(data []byte) (*PubrelPacket, error) {
+	if len(data) < 2 {
+		return nil, &ErrMalformedPacket{Reason: "PUBREL packet too short"}
+	}
+	return &PubrelPacket{PacketID: binary.BigEndian.Uint16(data[:2])}, nil
+}
+
+// PubcompPacket represents an MQTT PUBCOMP packet (QoS 2, step 4).
+type PubcompPacket struct {
+	PacketID uint16
+}
+
+func (p *PubcompPacket) Encode() []byte {
+	fh := FixedHeader{PacketType: PUBCOMP, RemainingLength: 2}
+	buf := fh.Encode()
+	buf = append(buf, byte(p.PacketID>>8), byte(p.PacketID))
+	return buf
+}
+
+func DecodePubcompPacket(data []byte) (*PubcompPacket, error) {
+	if len(data) < 2 {
+		return nil, &ErrMalformedPacket{Reason: "PUBCOMP packet too short"}
+	}
+	return &PubcompPacket{PacketID: binary.BigEndian.Uint16(data[:2])}, nil
+}

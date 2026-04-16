@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/codec"
 	"github.com/langzp/dmqtt/internal/storage"
 )
@@ -45,6 +49,45 @@ func mqttConnect(t *testing.T, conn net.Conn, clientID string, cleanSession bool
 		t.Fatalf("CONNACK return code: %v", data)
 	}
 	conn.SetReadDeadline(time.Time{})
+}
+
+func mqttConnectWithAuth(t *testing.T, conn net.Conn, clientID, username, password string, cleanSession bool) (*codec.FixedHeader, []byte) {
+	t.Helper()
+
+	var payload bytes.Buffer
+	writeUTF8(&payload, "MQTT")
+	payload.WriteByte(0x04)
+	flags := byte(0x00)
+	if cleanSession {
+		flags |= 0x02
+	}
+	flags |= 0x80 // username flag
+	flags |= 0x40 // password flag
+	payload.WriteByte(flags)
+	payload.Write([]byte{0x00, 0x3C}) // keepalive 60s
+
+	writeUTF8(&payload, clientID)
+	writeUTF8(&payload, username)
+	// Password is binary data (length-prefixed)
+	pwBytes := []byte(password)
+	payload.WriteByte(byte(len(pwBytes) >> 8))
+	payload.WriteByte(byte(len(pwBytes)))
+	payload.Write(pwBytes)
+
+	fh := codec.FixedHeader{
+		PacketType:      codec.CONNECT,
+		RemainingLength: payload.Len(),
+	}
+	conn.Write(fh.Encode())
+	conn.Write(payload.Bytes())
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	respFH, data, err := codec.ReadPacket(conn)
+	if err != nil {
+		t.Fatalf("reading CONNACK: %v", err)
+	}
+	conn.SetReadDeadline(time.Time{})
+	return respFH, data
 }
 
 func mqttSubscribe(t *testing.T, conn net.Conn, packetID uint16, filter string, qos byte) {
@@ -195,6 +238,34 @@ func publishQoS1(t *testing.T, conn net.Conn, topic string, payload []byte, pack
 		PacketID: packetID,
 	}
 	conn.Write(pkt.Encode())
+}
+
+func setupAuthBroker(t *testing.T) *Broker {
+	t.Helper()
+	// Create auth file with test users
+	hash, _ := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.MinCost)
+	authJSON := `{"users":[
+        {"username":"allowed","password_hash":"` + string(hash) + `","acl":[
+            {"topic":"permitted/#","access":"publish"},
+            {"topic":"permitted/#","access":"subscribe"}
+        ]},
+        {"username":"limited","password_hash":"` + string(hash) + `","acl":[
+            {"topic":"readonly/#","access":"subscribe"}
+        ]}
+    ]}`
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth.json")
+	os.WriteFile(path, []byte(authJSON), 0644)
+
+	store, err := auth.LoadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b := New(":0", nil)
+	b.SetAuth(store, store)
+	return b
 }
 
 func TestBroker_ConnectDisconnect(t *testing.T) {
@@ -587,4 +658,120 @@ func TestBroker_PersistentSessionRecovery(t *testing.T) {
 		t.Fatalf("expected after-restart, got %s", pubPkt.Payload)
 	}
 	sub2.SetReadDeadline(time.Time{})
+}
+
+func TestBroker_ConnectAuth_Rejected(t *testing.T) {
+	b := setupAuthBroker(t)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	conn := dial(t, b.Addr())
+	defer conn.Close()
+
+	_, data := mqttConnectWithAuth(t, conn, "client1", "allowed", "wrongpass", true)
+	if len(data) < 2 || data[1] != codec.ConnackBadUsernameOrPassword {
+		t.Fatalf("expected CONNACK 0x04, got %v", data)
+	}
+}
+
+func TestBroker_ConnectAuth_Accepted(t *testing.T) {
+	b := setupAuthBroker(t)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	conn := dial(t, b.Addr())
+	defer conn.Close()
+
+	_, data := mqttConnectWithAuth(t, conn, "client1", "allowed", "testpass", true)
+	if len(data) < 2 || data[1] != codec.ConnackAccepted {
+		t.Fatalf("expected CONNACK 0x00, got %v", data)
+	}
+}
+
+func TestBroker_SubscribeACL_Denied(t *testing.T) {
+	b := setupAuthBroker(t)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	conn := dial(t, b.Addr())
+	defer conn.Close()
+
+	// Connect as "limited" user (only has subscribe on readonly/#)
+	_, data := mqttConnectWithAuth(t, conn, "limited-client", "limited", "testpass", true)
+	if data[1] != codec.ConnackAccepted {
+		t.Fatalf("expected accepted, got %v", data[1])
+	}
+
+	// Subscribe to forbidden topic
+	var payload bytes.Buffer
+	payload.Write([]byte{0x00, 0x01}) // packet ID = 1
+	writeUTF8(&payload, "permitted/data")
+	payload.WriteByte(0) // QoS 0
+
+	fh := codec.FixedHeader{
+		PacketType:      codec.SUBSCRIBE,
+		QoS:             1,
+		RemainingLength: payload.Len(),
+	}
+	conn.Write(fh.Encode())
+	conn.Write(payload.Bytes())
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	respFH, respData, err := codec.ReadPacket(conn)
+	if err != nil {
+		t.Fatalf("reading SUBACK: %v", err)
+	}
+	conn.SetReadDeadline(time.Time{})
+
+	if respFH.PacketType != codec.SUBACK {
+		t.Fatalf("expected SUBACK, got %s", codec.PacketTypeName(respFH.PacketType))
+	}
+	// SUBACK: 2 bytes packet ID + return codes
+	if len(respData) < 3 || respData[2] != 0x80 {
+		t.Fatalf("expected SUBACK failure 0x80, got %v", respData)
+	}
+}
+
+func TestBroker_PublishACL_Denied(t *testing.T) {
+	b := setupAuthBroker(t)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	// Subscriber on permitted/#
+	sub := dial(t, b.Addr())
+	defer sub.Close()
+	_, dataS := mqttConnectWithAuth(t, sub, "sub-client", "allowed", "testpass", true)
+	if dataS[1] != codec.ConnackAccepted {
+		t.Fatalf("sub connect failed: data=%v", dataS)
+	}
+	mqttSubscribe(t, sub, 1, "permitted/#", 0)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publisher: "limited" user has no publish ACL
+	pub := dial(t, b.Addr())
+	defer pub.Close()
+	_, dataP := mqttConnectWithAuth(t, pub, "pub-client", "limited", "testpass", true)
+	if dataP[1] != codec.ConnackAccepted {
+		t.Fatalf("pub connect failed")
+	}
+
+	// Publish to permitted/data — should be silently dropped (limited has no publish ACL)
+	pkt := &codec.PublishPacket{
+		Topic:   "permitted/data",
+		QoS:     0,
+		Payload: []byte("denied-msg"),
+	}
+	pub.Write(pkt.Encode())
+
+	// Subscriber should NOT receive the message
+	sub.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_, _, err := codec.ReadPacket(sub)
+	if err == nil {
+		t.Error("expected no message (ACL denied), but received one")
+	}
+	sub.SetReadDeadline(time.Time{})
 }

@@ -1,34 +1,39 @@
 package cluster
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/hashicorp/memberlist"
 )
 
 // ClusterConfig holds cluster configuration.
 type ClusterConfig struct {
-	Enabled      bool
-	Name         string
-	NodeID       string
-	Host         string
-	GossipPort   int
-	MQTTPort     int
-	Region       string
-	Seeds        []string
-	VirtualNodes int
-	ReplicaCount int
+	Enabled       bool
+	Name          string
+	NodeID        string
+	Host          string
+	GossipPort    int
+	TransportPort int
+	MQTTPort      int
+	Region        string
+	Seeds         []string
+	VirtualNodes  int
+	ReplicaCount  int
 }
 
 // DefaultClusterConfig returns sensible defaults.
 func DefaultClusterConfig() ClusterConfig {
 	return ClusterConfig{
-		Enabled:      false,
-		Name:         "dmqtt",
-		GossipPort:   7000,
-		MQTTPort:     1883,
-		VirtualNodes: 150,
-		ReplicaCount: 3,
+		Enabled:       false,
+		Name:          "dmqtt",
+		GossipPort:    7000,
+		TransportPort: 8000,
+		MQTTPort:      1883,
+		VirtualNodes:  150,
+		ReplicaCount:  3,
 	}
 }
 
@@ -38,7 +43,14 @@ type Cluster struct {
 	ring       *Ring
 	self       NodeInfo
 	config     ClusterConfig
-	done       chan struct{}
+
+	transport            *PeerTransport
+	remoteSubs           *RemoteSubIndex
+	broadcasts           *memberlist.TransmitLimitedQueue
+	forwardHandler       func(ForwardMessage)
+	localFiltersProvider func() []string
+
+	done chan struct{}
 }
 
 // NewCluster creates a new Cluster from the given config.
@@ -51,6 +63,9 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 	if cfg.GossipPort == 0 {
 		cfg.GossipPort = 7000
+	}
+	if cfg.TransportPort == 0 {
+		cfg.TransportPort = cfg.GossipPort + 1000
 	}
 	if cfg.MQTTPort == 0 {
 		cfg.MQTTPort = 1883
@@ -71,22 +86,44 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 
 	ring := NewRing(cfg.VirtualNodes)
+	remoteSubs := NewRemoteSubIndex()
 
-	membership, err := NewMembership(self, cfg.Seeds)
+	c := &Cluster{
+		ring:       ring,
+		self:       self,
+		config:     cfg,
+		remoteSubs: remoteSubs,
+		done:       make(chan struct{}),
+	}
+
+	c.broadcasts = &memberlist.TransmitLimitedQueue{
+		NumNodes:       func() int { return c.Size() },
+		RetransmitMult: 3,
+	}
+
+	membership, err := NewMembership(self, cfg.Seeds, c.broadcasts, c.handleBroadcastMsg)
 	if err != nil {
 		return nil, fmt.Errorf("creating membership: %w", err)
 	}
+	c.membership = membership
 
 	// Initialize ring with current members
 	ring.Update(membership.Members())
 
-	c := &Cluster{
-		membership: membership,
-		ring:       ring,
-		self:       self,
-		config:     cfg,
-		done:       make(chan struct{}),
+	transport, err := NewPeerTransport(
+		fmt.Sprintf("%s:%d", cfg.Host, cfg.TransportPort),
+		cfg.NodeID,
+		func(msg ForwardMessage) {
+			if c.forwardHandler != nil {
+				c.forwardHandler(msg)
+			}
+		},
+	)
+	if err != nil {
+		membership.Leave(5 * time.Second)
+		return nil, fmt.Errorf("creating peer transport: %w", err)
 	}
+	c.transport = transport
 
 	go c.eventLoop()
 
@@ -101,8 +138,16 @@ func (c *Cluster) eventLoop() {
 			switch ev.Type {
 			case NodeJoin:
 				log.Printf("cluster: node %s joined", ev.Node.ID)
+				if ev.Node.ID != c.self.ID {
+					c.transport.AddPeer(ev.Node.ID, fmt.Sprintf("%s:%d", ev.Node.Host, ev.Node.GossipPort+1000))
+					if c.localFiltersProvider != nil {
+						go c.rebroadcastLocalSubs(c.localFiltersProvider())
+					}
+				}
 			case NodeLeave:
 				log.Printf("cluster: node %s left", ev.Node.ID)
+				c.transport.RemovePeer(ev.Node.ID)
+				c.remoteSubs.RemoveNode(ev.Node.ID)
 			case NodeUpdate:
 				log.Printf("cluster: node %s updated", ev.Node.ID)
 			}
@@ -116,7 +161,62 @@ func (c *Cluster) eventLoop() {
 // Stop gracefully leaves the cluster and shuts down.
 func (c *Cluster) Stop() error {
 	close(c.done)
+	if c.transport != nil {
+		c.transport.Stop()
+	}
 	return c.membership.Leave(5 * time.Second)
+}
+
+// RemoteSubs returns the remote subscription index.
+func (c *Cluster) RemoteSubs() *RemoteSubIndex { return c.remoteSubs }
+
+// SetForwardHandler sets the callback invoked when a forwarded message arrives.
+func (c *Cluster) SetForwardHandler(fn func(ForwardMessage)) { c.forwardHandler = fn }
+
+// SetLocalFiltersProvider sets a function that returns current local subscription filters.
+func (c *Cluster) SetLocalFiltersProvider(fn func() []string) { c.localFiltersProvider = fn }
+
+// Forward sends a message to the specified remote node.
+func (c *Cluster) Forward(nodeID string, msg ForwardMessage) error {
+	msg.Type = MsgForward
+	msg.Forwarded = true
+	if msg.ID == 0 {
+		msg.ID = c.transport.NextID()
+	}
+	if msg.QoS == 0 {
+		return c.transport.Send(nodeID, msg)
+	}
+	return c.transport.SendReliable(nodeID, msg, 3, 5*time.Second)
+}
+
+// BroadcastSubscribe queues a subscription broadcast via gossip.
+func (c *Cluster) BroadcastSubscribe(topicFilter string, qos byte) {
+	msg := SubBroadcast{Type: "sub", NodeID: c.self.ID, TopicFilter: topicFilter, QoS: qos}
+	c.broadcasts.QueueBroadcast(&subBroadcastItem{msg: msg})
+}
+
+// BroadcastUnsubscribe queues an unsubscription broadcast via gossip.
+func (c *Cluster) BroadcastUnsubscribe(topicFilter string) {
+	msg := SubBroadcast{Type: "unsub", NodeID: c.self.ID, TopicFilter: topicFilter}
+	c.broadcasts.QueueBroadcast(&subBroadcastItem{msg: msg})
+}
+
+func (c *Cluster) handleBroadcastMsg(data []byte) {
+	var msg SubBroadcast
+	if err := json.Unmarshal(data, &msg); err != nil {
+		log.Printf("cluster: unmarshal broadcast: %v", err)
+		return
+	}
+	if msg.NodeID == c.self.ID {
+		return
+	}
+	HandleSubBroadcast(c.remoteSubs, msg)
+}
+
+func (c *Cluster) rebroadcastLocalSubs(localFilters []string) {
+	for _, filter := range localFilters {
+		c.BroadcastSubscribe(filter, 2)
+	}
 }
 
 // Self returns this node's info.

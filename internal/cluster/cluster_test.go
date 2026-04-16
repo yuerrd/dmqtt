@@ -7,13 +7,14 @@ import (
 
 func TestCluster_SingleNode(t *testing.T) {
 	cfg := ClusterConfig{
-		Enabled:      true,
-		NodeID:       "test-node-1",
-		Host:         "127.0.0.1",
-		GossipPort:   18001,
-		MQTTPort:     19001,
-		VirtualNodes: 150,
-		ReplicaCount: 3,
+		Enabled:       true,
+		NodeID:        "test-node-1",
+		Host:          "127.0.0.1",
+		GossipPort:    18001,
+		TransportPort: 29001,
+		MQTTPort:      19001,
+		VirtualNodes:  150,
+		ReplicaCount:  3,
 	}
 
 	c, err := NewCluster(cfg)
@@ -37,9 +38,9 @@ func TestCluster_SingleNode(t *testing.T) {
 }
 
 func TestCluster_ThreeNodes_DeviceOwnership(t *testing.T) {
-	cfg1 := ClusterConfig{NodeID: "c-node-1", Host: "127.0.0.1", GossipPort: 18002, MQTTPort: 19002, VirtualNodes: 150, ReplicaCount: 3}
-	cfg2 := ClusterConfig{NodeID: "c-node-2", Host: "127.0.0.1", GossipPort: 18003, MQTTPort: 19003, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18002"}}
-	cfg3 := ClusterConfig{NodeID: "c-node-3", Host: "127.0.0.1", GossipPort: 18004, MQTTPort: 19004, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18002"}}
+	cfg1 := ClusterConfig{NodeID: "c-node-1", Host: "127.0.0.1", GossipPort: 18002, TransportPort: 29002, MQTTPort: 19002, VirtualNodes: 150, ReplicaCount: 3}
+	cfg2 := ClusterConfig{NodeID: "c-node-2", Host: "127.0.0.1", GossipPort: 18003, TransportPort: 29003, MQTTPort: 19003, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18002"}}
+	cfg3 := ClusterConfig{NodeID: "c-node-3", Host: "127.0.0.1", GossipPort: 18004, TransportPort: 29004, MQTTPort: 19004, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18002"}}
 
 	c1, err := NewCluster(cfg1)
 	if err != nil {
@@ -83,8 +84,8 @@ func TestCluster_ThreeNodes_DeviceOwnership(t *testing.T) {
 }
 
 func TestCluster_NodeLeave_RingUpdates(t *testing.T) {
-	cfg1 := ClusterConfig{NodeID: "l-node-1", Host: "127.0.0.1", GossipPort: 18005, MQTTPort: 19005, VirtualNodes: 150, ReplicaCount: 3}
-	cfg2 := ClusterConfig{NodeID: "l-node-2", Host: "127.0.0.1", GossipPort: 18006, MQTTPort: 19006, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18005"}}
+	cfg1 := ClusterConfig{NodeID: "l-node-1", Host: "127.0.0.1", GossipPort: 18005, TransportPort: 29005, MQTTPort: 19005, VirtualNodes: 150, ReplicaCount: 3}
+	cfg2 := ClusterConfig{NodeID: "l-node-2", Host: "127.0.0.1", GossipPort: 18006, TransportPort: 29006, MQTTPort: 19006, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18005"}}
 
 	c1, err := NewCluster(cfg1)
 	if err != nil {
@@ -119,7 +120,7 @@ func TestCluster_NodeLeave_RingUpdates(t *testing.T) {
 }
 
 func TestCluster_RequiresNodeID(t *testing.T) {
-	cfg := ClusterConfig{Host: "127.0.0.1", GossipPort: 18007}
+	cfg := ClusterConfig{Host: "127.0.0.1", GossipPort: 18007, TransportPort: 29007}
 	_, err := NewCluster(cfg)
 	if err == nil {
 		t.Error("expected error for empty NodeID")
@@ -127,9 +128,9 @@ func TestCluster_RequiresNodeID(t *testing.T) {
 }
 
 func TestCluster_LocateDeviceN_Replicas(t *testing.T) {
-	cfg1 := ClusterConfig{NodeID: "r-node-1", Host: "127.0.0.1", GossipPort: 18008, MQTTPort: 19008, VirtualNodes: 150, ReplicaCount: 3}
-	cfg2 := ClusterConfig{NodeID: "r-node-2", Host: "127.0.0.1", GossipPort: 18009, MQTTPort: 19009, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18008"}}
-	cfg3 := ClusterConfig{NodeID: "r-node-3", Host: "127.0.0.1", GossipPort: 18010, MQTTPort: 19010, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18008"}}
+	cfg1 := ClusterConfig{NodeID: "r-node-1", Host: "127.0.0.1", GossipPort: 18008, TransportPort: 29008, MQTTPort: 19008, VirtualNodes: 150, ReplicaCount: 3}
+	cfg2 := ClusterConfig{NodeID: "r-node-2", Host: "127.0.0.1", GossipPort: 18009, TransportPort: 29009, MQTTPort: 19009, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18008"}}
+	cfg3 := ClusterConfig{NodeID: "r-node-3", Host: "127.0.0.1", GossipPort: 18010, TransportPort: 29010, MQTTPort: 19010, VirtualNodes: 150, ReplicaCount: 3, Seeds: []string{"127.0.0.1:18008"}}
 
 	c1, err := NewCluster(cfg1)
 	if err != nil {

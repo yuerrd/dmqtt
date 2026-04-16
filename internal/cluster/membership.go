@@ -35,15 +35,17 @@ type Membership struct {
 
 // NewMembership creates a new Membership for the given node.
 // seeds is a list of existing node gossip addresses to join (can be empty for first node).
-func NewMembership(self NodeInfo, seeds []string) (*Membership, error) {
+func NewMembership(self NodeInfo, seeds []string, broadcasts *memberlist.TransmitLimitedQueue, onMessage func([]byte)) (*Membership, error) {
 	m := &Membership{
 		self:   self,
 		events: make(chan MemberEvent, 256),
 	}
 
 	m.delegate = &membershipDelegate{
-		self:   self,
-		events: m.events,
+		self:       self,
+		events:     m.events,
+		broadcasts: broadcasts,
+		onMessage:  onMessage,
 	}
 
 	cfg := memberlist.DefaultLANConfig()
@@ -115,9 +117,11 @@ func (m *Membership) Self() NodeInfo {
 
 // membershipDelegate implements memberlist.Delegate and memberlist.EventDelegate.
 type membershipDelegate struct {
-	self   NodeInfo
-	meta   []byte
-	events chan MemberEvent
+	self       NodeInfo
+	meta       []byte
+	events     chan MemberEvent
+	broadcasts *memberlist.TransmitLimitedQueue
+	onMessage  func([]byte)
 }
 
 // --- memberlist.Delegate interface ---
@@ -131,8 +135,19 @@ func (d *membershipDelegate) NodeMeta(limit int) []byte {
 	return data
 }
 
-func (d *membershipDelegate) NotifyMsg([]byte)                            {}
-func (d *membershipDelegate) GetBroadcasts(overhead, limit int) [][]byte  { return nil }
+func (d *membershipDelegate) NotifyMsg(data []byte) {
+	if d.onMessage != nil && len(data) > 0 {
+		d.onMessage(data)
+	}
+}
+
+func (d *membershipDelegate) GetBroadcasts(overhead, limit int) [][]byte {
+	if d.broadcasts != nil {
+		return d.broadcasts.GetBroadcasts(overhead, limit)
+	}
+	return nil
+}
+
 func (d *membershipDelegate) LocalState(join bool) []byte                 { return nil }
 func (d *membershipDelegate) MergeRemoteState(buf []byte, join bool)      {}
 

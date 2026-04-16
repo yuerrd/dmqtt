@@ -13,7 +13,7 @@ func TestMembership_SingleNode(t *testing.T) {
 		MQTTPort:   11883,
 	}
 
-	m, err := NewMembership(self, nil)
+	m, err := NewMembership(self, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewMembership: %v", err)
 	}
@@ -36,13 +36,13 @@ func TestMembership_TwoNodes_JoinAndLeave(t *testing.T) {
 	node1 := NodeInfo{ID: "node-1", Host: "127.0.0.1", GossipPort: 17002, MQTTPort: 11884}
 	node2 := NodeInfo{ID: "node-2", Host: "127.0.0.1", GossipPort: 17003, MQTTPort: 11885}
 
-	m1, err := NewMembership(node1, nil)
+	m1, err := NewMembership(node1, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("m1: %v", err)
 	}
 	defer m1.Leave(time.Second)
 
-	m2, err := NewMembership(node2, []string{"127.0.0.1:17002"})
+	m2, err := NewMembership(node2, []string{"127.0.0.1:17002"}, nil, nil)
 	if err != nil {
 		t.Fatalf("m2: %v", err)
 	}
@@ -83,19 +83,19 @@ func TestMembership_ThreeNodes(t *testing.T) {
 	node2 := NodeInfo{ID: "node-2", Host: "127.0.0.1", GossipPort: 17005, MQTTPort: 11887}
 	node3 := NodeInfo{ID: "node-3", Host: "127.0.0.1", GossipPort: 17006, MQTTPort: 11888}
 
-	m1, err := NewMembership(node1, nil)
+	m1, err := NewMembership(node1, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("m1: %v", err)
 	}
 	defer m1.Leave(time.Second)
 
-	m2, err := NewMembership(node2, []string{"127.0.0.1:17004"})
+	m2, err := NewMembership(node2, []string{"127.0.0.1:17004"}, nil, nil)
 	if err != nil {
 		t.Fatalf("m2: %v", err)
 	}
 	defer m2.Leave(time.Second)
 
-	m3, err := NewMembership(node3, []string{"127.0.0.1:17004"})
+	m3, err := NewMembership(node3, []string{"127.0.0.1:17004"}, nil, nil)
 	if err != nil {
 		t.Fatalf("m3: %v", err)
 	}

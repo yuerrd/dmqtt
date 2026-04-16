@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
@@ -20,6 +21,7 @@ type Broker struct {
 	dedupStore    *DedupStore
 	offlineStore  *OfflineStore
 	store         storage.Store
+	cluster       *cluster.Cluster
 
 	inflightLimit int
 
@@ -123,6 +125,16 @@ func (b *Broker) Addr() string {
 		return ""
 	}
 	return b.listener.Addr()
+}
+
+// SetCluster attaches a cluster to the broker. Must be called before Start().
+func (b *Broker) SetCluster(c *cluster.Cluster) {
+	b.cluster = c
+}
+
+// Cluster returns the attached cluster, or nil if standalone.
+func (b *Broker) Cluster() *cluster.Cluster {
+	return b.cluster
 }
 
 func (b *Broker) registerClient(c *Client) {

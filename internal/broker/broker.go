@@ -16,7 +16,7 @@ import (
 // Broker is the MQTT message broker.
 type Broker struct {
 	addr          string
-	listener      transport.Listener
+	listeners     []transport.Listener
 	subscriptions *SubscriptionIndex
 	sessions      *SessionStore
 	retainStore   *RetainStore
@@ -73,48 +73,64 @@ func (b *Broker) loadFromStorage() error {
 	return nil
 }
 
-func (b *Broker) Start() error {
+// Serve accepts connections from the given listeners.
+// Blocks until Stop() is called.
+func (b *Broker) Serve(listeners ...transport.Listener) error {
 	if err := b.loadFromStorage(); err != nil {
 		return err
 	}
 
-	l, err := transport.NewTCPListener(b.addr)
-	if err != nil {
-		return err
-	}
-
 	b.mu.Lock()
-	b.listener = l
+	b.listeners = listeners
 	b.mu.Unlock()
 
-	slog.Info("DMQTT listening", "addr", l.Addr())
+	for _, ln := range listeners {
+		slog.Info("DMQTT listening", "addr", ln.Addr())
+	}
 
+	for _, ln := range listeners {
+		go b.acceptLoop(ln)
+	}
+
+	// Wait until Stop() is called
+	<-b.done
+	return nil
+}
+
+func (b *Broker) acceptLoop(l transport.Listener) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			select {
 			case <-b.done:
-				return nil
+				return
 			default:
 				slog.Error("accept error", "error", err)
 				continue
 			}
 		}
-
 		c := newClient(conn, b)
 		go c.serve()
 	}
+}
+
+func (b *Broker) Start() error {
+	l, err := transport.NewTCPListener(b.addr)
+	if err != nil {
+		return err
+	}
+	return b.Serve(l)
 }
 
 func (b *Broker) Stop() {
 	close(b.done)
 
 	b.mu.Lock()
-	listener := b.listener
+	listeners := b.listeners
 	b.mu.Unlock()
 
-	if listener != nil {
-		listener.Close()
+	for _, l := range listeners {
+		l.Close()
 	}
 
 	b.mu.RLock()
@@ -127,11 +143,10 @@ func (b *Broker) Stop() {
 func (b *Broker) Addr() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-
-	if b.listener == nil {
+	if len(b.listeners) == 0 {
 		return ""
 	}
-	return b.listener.Addr()
+	return b.listeners[0].Addr()
 }
 
 // SetCluster attaches a cluster to the broker and registers handlers.
@@ -277,5 +292,5 @@ func (b *Broker) ClusterNodeCount() int {
 func (b *Broker) IsReady() bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.listener != nil
+	return len(b.listeners) > 0
 }

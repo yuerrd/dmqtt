@@ -53,3 +53,47 @@ func HandleSubBroadcast(idx *RemoteSubIndex, msg SubBroadcast) {
 		log.Printf("gossip: unknown broadcast type: %s", msg.Type)
 	}
 }
+
+// ConnBroadcast is the gossip message for connection changes.
+type ConnBroadcast struct {
+	Type     string `json:"type"`     // "conn" or "disconn"
+	NodeID   string `json:"nodeID"`
+	DeviceID string `json:"deviceID"`
+}
+
+// connBroadcastItem implements memberlist.Broadcast.
+type connBroadcastItem struct {
+	msg ConnBroadcast
+}
+
+func (b *connBroadcastItem) Invalidates(other memberlist.Broadcast) bool {
+	otherItem, ok := other.(*connBroadcastItem)
+	if !ok {
+		return false
+	}
+	return b.msg.DeviceID == otherItem.msg.DeviceID
+}
+
+func (b *connBroadcastItem) Message() []byte {
+	data, err := json.Marshal(b.msg)
+	if err != nil {
+		log.Printf("gossip: marshal conn broadcast error: %v", err)
+		return nil
+	}
+	return data
+}
+
+func (b *connBroadcastItem) Finished() {}
+
+// HandleConnBroadcast processes an incoming connection broadcast and updates
+// the connection index.
+func HandleConnBroadcast(idx *ConnectionIndex, msg ConnBroadcast) {
+	switch msg.Type {
+	case "conn":
+		idx.Add(msg.DeviceID, msg.NodeID)
+	case "disconn":
+		idx.Remove(msg.DeviceID)
+	default:
+		log.Printf("gossip: unknown conn broadcast type: %s", msg.Type)
+	}
+}

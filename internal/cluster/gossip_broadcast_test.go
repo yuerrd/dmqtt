@@ -103,3 +103,46 @@ func TestHandleSubBroadcast(t *testing.T) {
 		t.Fatalf("expected 0 matches after unsub, got %d", len(matches))
 	}
 }
+
+func TestConnBroadcastItem_Invalidates_SameDevice(t *testing.T) {
+	b1 := &connBroadcastItem{msg: ConnBroadcast{Type: "conn", NodeID: "node-1", DeviceID: "device-A"}}
+	b2 := &connBroadcastItem{msg: ConnBroadcast{Type: "disconn", NodeID: "node-1", DeviceID: "device-A"}}
+	if !b1.Invalidates(b2) {
+		t.Error("expected same deviceID to invalidate")
+	}
+}
+
+func TestConnBroadcastItem_Invalidates_DifferentDevice(t *testing.T) {
+	b1 := &connBroadcastItem{msg: ConnBroadcast{Type: "conn", NodeID: "node-1", DeviceID: "device-A"}}
+	b2 := &connBroadcastItem{msg: ConnBroadcast{Type: "conn", NodeID: "node-1", DeviceID: "device-B"}}
+	if b1.Invalidates(b2) {
+		t.Error("expected different deviceID to NOT invalidate")
+	}
+}
+
+func TestConnBroadcastItem_Invalidates_DifferentType(t *testing.T) {
+	conn := &connBroadcastItem{msg: ConnBroadcast{Type: "conn", NodeID: "node-1", DeviceID: "device-A"}}
+	sub := &subBroadcastItem{msg: SubBroadcast{Type: "sub", NodeID: "node-1", TopicFilter: "a/b"}}
+	if conn.Invalidates(sub) {
+		t.Error("expected connBroadcast to NOT invalidate subBroadcast")
+	}
+}
+
+func TestHandleConnBroadcast_ConnAdds(t *testing.T) {
+	idx := NewConnectionIndex()
+	HandleConnBroadcast(idx, ConnBroadcast{Type: "conn", NodeID: "node-1", DeviceID: "device-A"})
+	nodeID, ok := idx.Lookup("device-A")
+	if !ok || nodeID != "node-1" {
+		t.Errorf("expected device-A on node-1, got %s, ok=%v", nodeID, ok)
+	}
+}
+
+func TestHandleConnBroadcast_DisconnRemoves(t *testing.T) {
+	idx := NewConnectionIndex()
+	idx.Add("device-A", "node-1")
+	HandleConnBroadcast(idx, ConnBroadcast{Type: "disconn", NodeID: "node-1", DeviceID: "device-A"})
+	_, ok := idx.Lookup("device-A")
+	if ok {
+		t.Error("expected device-A to be removed")
+	}
+}

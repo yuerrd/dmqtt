@@ -3,7 +3,7 @@ package broker
 import (
 	"encoding/base64"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -43,13 +43,13 @@ func (rs *RetainStore) Load() error {
 	return rs.store.Scan([]byte("r/"), func(key, value []byte) error {
 		var rj retainedJSON
 		if err := json.Unmarshal(value, &rj); err != nil {
-			log.Printf("skipping corrupt retained key=%s: %v", key, err)
+			slog.Warn("skipping corrupt retained message", "key", string(key), "error", err)
 			return nil
 		}
 		topic := strings.TrimPrefix(string(key), "r/")
 		payload, err := base64.StdEncoding.DecodeString(rj.Payload)
 		if err != nil {
-			log.Printf("skipping corrupt retained payload key=%s: %v", key, err)
+			slog.Warn("skipping corrupt retained payload", "key", string(key), "error", err)
 			return nil
 		}
 		rs.messages[topic] = &retainedMessage{

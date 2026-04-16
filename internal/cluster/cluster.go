@@ -3,7 +3,7 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/hashicorp/memberlist"
@@ -143,7 +143,7 @@ func (c *Cluster) eventLoop() {
 		case ev := <-c.membership.Events():
 			switch ev.Type {
 			case NodeJoin:
-				log.Printf("cluster: node %s joined", ev.Node.ID)
+				slog.Info("cluster: node joined", "node", ev.Node.ID)
 				if ev.Node.ID != c.self.ID {
 					c.transport.AddPeer(ev.Node.ID, fmt.Sprintf("%s:%d", ev.Node.Host, ev.Node.TransportPort))
 					if c.localFiltersProvider != nil {
@@ -154,12 +154,12 @@ func (c *Cluster) eventLoop() {
 					}
 				}
 			case NodeLeave:
-				log.Printf("cluster: node %s left", ev.Node.ID)
+				slog.Info("cluster: node left", "node", ev.Node.ID)
 				c.transport.RemovePeer(ev.Node.ID)
 				c.remoteSubs.RemoveNode(ev.Node.ID)
 				c.connections.RemoveNode(ev.Node.ID)
 			case NodeUpdate:
-				log.Printf("cluster: node %s updated", ev.Node.ID)
+				slog.Info("cluster: node updated", "node", ev.Node.ID)
 			}
 			c.ring.Update(c.membership.Members())
 		case <-c.done:
@@ -216,7 +216,7 @@ func (c *Cluster) handleBroadcastMsg(data []byte) {
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(data, &peek); err != nil {
-		log.Printf("cluster: unmarshal broadcast peek: %v", err)
+		slog.Error("cluster: unmarshal broadcast peek", "error", err)
 		return
 	}
 
@@ -224,7 +224,7 @@ func (c *Cluster) handleBroadcastMsg(data []byte) {
 	case "sub", "unsub":
 		var msg SubBroadcast
 		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Printf("cluster: unmarshal sub broadcast: %v", err)
+			slog.Error("cluster: unmarshal sub broadcast", "error", err)
 			return
 		}
 		if msg.NodeID == c.self.ID {
@@ -234,7 +234,7 @@ func (c *Cluster) handleBroadcastMsg(data []byte) {
 	case "conn", "disconn":
 		var msg ConnBroadcast
 		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Printf("cluster: unmarshal conn broadcast: %v", err)
+			slog.Error("cluster: unmarshal conn broadcast", "error", err)
 			return
 		}
 		if msg.NodeID == c.self.ID {
@@ -245,7 +245,7 @@ func (c *Cluster) handleBroadcastMsg(data []byte) {
 			c.onRemoteConnect(msg.DeviceID, msg.NodeID)
 		}
 	default:
-		log.Printf("cluster: unknown broadcast type: %s", peek.Type)
+		slog.Warn("cluster: unknown broadcast type", "type", peek.Type)
 	}
 }
 

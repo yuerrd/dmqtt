@@ -3,6 +3,7 @@ package cluster
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -73,7 +74,7 @@ func NewMembership(self NodeInfo, seeds []string, broadcasts *memberlist.Transmi
 			list.Shutdown()
 			return nil, fmt.Errorf("joining cluster via %v: %w", seeds, err)
 		}
-		log.Printf("joined cluster via %d seed(s)", n)
+		slog.Info("joined cluster", "seeds", n)
 	}
 
 	return m, nil
@@ -89,7 +90,7 @@ func (m *Membership) Members() []NodeInfo {
 	for _, member := range members {
 		info, err := UnmarshalNodeInfo(member.Meta)
 		if err != nil {
-			log.Printf("skipping member %s: bad metadata: %v", member.Name, err)
+			slog.Warn("skipping member with bad metadata", "member", member.Name, "error", err)
 			continue
 		}
 		nodes = append(nodes, info)
@@ -129,7 +130,7 @@ type membershipDelegate struct {
 func (d *membershipDelegate) NodeMeta(limit int) []byte {
 	data, _ := d.self.Marshal()
 	if len(data) > limit {
-		log.Printf("WARNING: node metadata %d bytes exceeds limit %d", len(data), limit)
+		slog.Warn("node metadata exceeds limit", "size", len(data), "limit", limit)
 		return nil
 	}
 	return data
@@ -161,7 +162,7 @@ func (d *membershipDelegate) NotifyJoin(node *memberlist.Node) {
 	select {
 	case d.events <- MemberEvent{Type: NodeJoin, Node: info}:
 	default:
-		log.Printf("membership event channel full, dropping join event for %s", node.Name)
+		slog.Warn("membership event channel full, dropping join", "node", node.Name)
 	}
 }
 
@@ -174,7 +175,7 @@ func (d *membershipDelegate) NotifyLeave(node *memberlist.Node) {
 	select {
 	case d.events <- MemberEvent{Type: NodeLeave, Node: info}:
 	default:
-		log.Printf("membership event channel full, dropping leave event for %s", node.Name)
+		slog.Warn("membership event channel full, dropping leave", "node", node.Name)
 	}
 }
 

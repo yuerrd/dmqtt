@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -92,7 +92,7 @@ func (pt *PeerTransport) acceptLoop() {
 			case <-pt.done:
 				return
 			default:
-				log.Printf("peer transport accept error: %v", err)
+				slog.Error("peer transport accept error", "error", err)
 				continue
 			}
 		}
@@ -116,7 +116,7 @@ func (pt *PeerTransport) handleConn(conn net.Conn) {
 				select {
 				case <-pt.done:
 				default:
-					log.Printf("peer transport read error: %v", err)
+					slog.Error("peer transport read error", "error", err)
 				}
 			}
 			return
@@ -125,7 +125,7 @@ func (pt *PeerTransport) handleConn(conn net.Conn) {
 		// Try to decode as ForwardMessage first
 		var msg ForwardMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Printf("peer transport unmarshal error: %v", err)
+			slog.Error("peer transport unmarshal error", "error", err)
 			continue
 		}
 
@@ -294,8 +294,7 @@ func (pt *PeerTransport) SendReliable(nodeID string, msg ForwardMessage, maxRetr
 			delete(pt.ackWaiters, msg.ID)
 			pt.ackMu.Unlock()
 			if attempt < maxRetries {
-				log.Printf("peer transport: ACK timeout for msg %d to %s, retry %d/%d",
-					msg.ID, nodeID, attempt+1, maxRetries)
+				slog.Warn("peer transport: ACK timeout", "msgID", msg.ID, "peer", nodeID, "retry", attempt+1, "maxRetries", maxRetries)
 				continue
 			}
 			return fmt.Errorf("ACK timeout for msg %d to %s after %d attempts", msg.ID, nodeID, maxRetries+1)

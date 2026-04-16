@@ -2,7 +2,7 @@ package cluster
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 
 	"github.com/hashicorp/memberlist"
 )
@@ -33,7 +33,7 @@ func (b *subBroadcastItem) Invalidates(other memberlist.Broadcast) bool {
 func (b *subBroadcastItem) Message() []byte {
 	data, err := json.Marshal(b.msg)
 	if err != nil {
-		log.Printf("gossip: marshal broadcast error: %v", err)
+		slog.Error("gossip: marshal broadcast error", "error", err)
 		return nil
 	}
 	return data
@@ -50,7 +50,7 @@ func HandleSubBroadcast(idx *RemoteSubIndex, msg SubBroadcast) {
 	case "unsub":
 		idx.Remove(msg.NodeID, msg.TopicFilter)
 	default:
-		log.Printf("gossip: unknown broadcast type: %s", msg.Type)
+		slog.Warn("gossip: unknown broadcast type", "type", msg.Type)
 	}
 }
 
@@ -77,7 +77,7 @@ func (b *connBroadcastItem) Invalidates(other memberlist.Broadcast) bool {
 func (b *connBroadcastItem) Message() []byte {
 	data, err := json.Marshal(b.msg)
 	if err != nil {
-		log.Printf("gossip: marshal conn broadcast error: %v", err)
+		slog.Error("gossip: marshal conn broadcast error", "error", err)
 		return nil
 	}
 	return data
@@ -94,6 +94,6 @@ func HandleConnBroadcast(idx *ConnectionIndex, msg ConnBroadcast) {
 	case "disconn":
 		idx.Remove(msg.DeviceID)
 	default:
-		log.Printf("gossip: unknown conn broadcast type: %s", msg.Type)
+		slog.Warn("gossip: unknown conn broadcast type", "type", msg.Type)
 	}
 }

@@ -2,7 +2,7 @@ package broker
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -39,7 +39,7 @@ func (ss *SessionStore) Load() error {
 	return ss.store.Scan([]byte("s/"), func(key, value []byte) error {
 		var s Session
 		if err := json.Unmarshal(value, &s); err != nil {
-			log.Printf("skipping corrupt session key=%s: %v", key, err)
+			slog.Warn("skipping corrupt session", "key", string(key), "error", err)
 			return nil
 		}
 		// Extract clientID from key "s/{clientID}"
@@ -97,10 +97,10 @@ func (ss *SessionStore) persist(clientID string, s *Session) {
 	}
 	data, err := json.Marshal(s)
 	if err != nil {
-		log.Printf("failed to persist session %s: %v", clientID, err)
+		slog.Error("failed to persist session", "client", clientID, "error", err)
 		return
 	}
 	if err := ss.store.Set([]byte("s/"+clientID), data); err != nil {
-		log.Printf("failed to write session %s: %v", clientID, err)
+		slog.Error("failed to write session", "client", clientID, "error", err)
 	}
 }

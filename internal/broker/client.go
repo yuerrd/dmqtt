@@ -2,7 +2,7 @@ package broker
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -38,7 +38,7 @@ func (c *Client) serve() {
 	defer c.close()
 
 	if err := c.handleConnect(); err != nil {
-		log.Printf("[%s] connect error: %v", c.conn.RemoteAddr(), err)
+		slog.Error("connect error", "remote", c.conn.RemoteAddr().String(), "error", err)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (c *Client) serve() {
 			c.will = nil // Clean disconnect — do not publish will
 			return
 		default:
-			log.Printf("[%s] unsupported packet type: %s", c.clientID, codec.PacketTypeName(fh.PacketType))
+			slog.Warn("unsupported packet type", "client", c.clientID, "type", codec.PacketTypeName(fh.PacketType))
 		}
 	}
 }
@@ -155,7 +155,7 @@ func (c *Client) handleConnect() error {
 func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 	pkt, err := codec.DecodePublishPacket(data, fh.QoS)
 	if err != nil {
-		log.Printf("[%s] decode PUBLISH error: %v", c.clientID, err)
+		slog.Error("decode PUBLISH error", "client", c.clientID, "error", err)
 		return
 	}
 
@@ -188,7 +188,7 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 func (c *Client) handlePuback(data []byte) {
 	pkt, err := codec.DecodePubackPacket(data)
 	if err != nil {
-		log.Printf("[%s] decode PUBACK error: %v", c.clientID, err)
+		slog.Error("decode PUBACK error", "client", c.clientID, "error", err)
 		return
 	}
 	c.inflight.Remove(pkt.PacketID)
@@ -197,7 +197,7 @@ func (c *Client) handlePuback(data []byte) {
 func (c *Client) handlePubrec(data []byte) {
 	pkt, err := codec.DecodePubrecPacket(data)
 	if err != nil {
-		log.Printf("[%s] decode PUBREC error: %v", c.clientID, err)
+		slog.Error("decode PUBREC error", "client", c.clientID, "error", err)
 		return
 	}
 	c.inflight.Remove(pkt.PacketID)
@@ -208,7 +208,7 @@ func (c *Client) handlePubrec(data []byte) {
 func (c *Client) handlePubrel(data []byte) {
 	pkt, err := codec.DecodePubrelPacket(data)
 	if err != nil {
-		log.Printf("[%s] decode PUBREL error: %v", c.clientID, err)
+		slog.Error("decode PUBREL error", "client", c.clientID, "error", err)
 		return
 	}
 	c.broker.dedupStore.Remove(c.clientID, pkt.PacketID)
@@ -250,7 +250,7 @@ func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
 func (c *Client) handleSubscribe(data []byte) {
 	pkt, err := codec.DecodeSubscribePacket(data)
 	if err != nil {
-		log.Printf("[%s] decode SUBSCRIBE error: %v", c.clientID, err)
+		slog.Error("decode SUBSCRIBE error", "client", c.clientID, "error", err)
 		return
 	}
 
@@ -304,7 +304,7 @@ func (c *Client) handleSubscribe(data []byte) {
 func (c *Client) handleUnsubscribe(data []byte) {
 	pkt, err := codec.DecodeUnsubscribePacket(data)
 	if err != nil {
-		log.Printf("[%s] decode UNSUBSCRIBE error: %v", c.clientID, err)
+		slog.Error("decode UNSUBSCRIBE error", "client", c.clientID, "error", err)
 		return
 	}
 

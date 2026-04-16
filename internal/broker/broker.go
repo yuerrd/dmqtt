@@ -2,7 +2,7 @@ package broker
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -81,7 +81,7 @@ func (b *Broker) Start() error {
 	b.listener = l
 	b.mu.Unlock()
 	
-	log.Printf("DMQTT listening on %s", l.Addr())
+	slog.Info("DMQTT listening", "addr", l.Addr())
 
 	for {
 		conn, err := l.Accept()
@@ -90,7 +90,7 @@ func (b *Broker) Start() error {
 			case <-b.done:
 				return nil
 			default:
-				log.Printf("accept error: %v", err)
+				slog.Error("accept error", "error", err)
 				continue
 			}
 		}

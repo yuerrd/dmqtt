@@ -46,9 +46,12 @@ type Cluster struct {
 
 	transport            *PeerTransport
 	remoteSubs           *RemoteSubIndex
+	connections          *ConnectionIndex
 	broadcasts           *memberlist.TransmitLimitedQueue
 	forwardHandler       func(ForwardMessage)
 	localFiltersProvider func() []string
+	localDevicesProvider func() []string
+	onRemoteConnect      func(deviceID, nodeID string)
 
 	done chan struct{}
 }
@@ -88,13 +91,15 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 
 	ring := NewRing(cfg.VirtualNodes)
 	remoteSubs := NewRemoteSubIndex()
+	connections := NewConnectionIndex()
 
 	c := &Cluster{
-		ring:       ring,
-		self:       self,
-		config:     cfg,
-		remoteSubs: remoteSubs,
-		done:       make(chan struct{}),
+		ring:        ring,
+		self:        self,
+		config:      cfg,
+		remoteSubs:  remoteSubs,
+		connections: connections,
+		done:        make(chan struct{}),
 	}
 
 	c.broadcasts = &memberlist.TransmitLimitedQueue{
@@ -144,11 +149,15 @@ func (c *Cluster) eventLoop() {
 					if c.localFiltersProvider != nil {
 						go c.rebroadcastLocalSubs(c.localFiltersProvider())
 					}
+					if c.localDevicesProvider != nil {
+						go c.rebroadcastLocalConnections(c.localDevicesProvider())
+					}
 				}
 			case NodeLeave:
 				log.Printf("cluster: node %s left", ev.Node.ID)
 				c.transport.RemovePeer(ev.Node.ID)
 				c.remoteSubs.RemoveNode(ev.Node.ID)
+				c.connections.RemoveNode(ev.Node.ID)
 			case NodeUpdate:
 				log.Printf("cluster: node %s updated", ev.Node.ID)
 			}
@@ -203,20 +212,52 @@ func (c *Cluster) BroadcastUnsubscribe(topicFilter string) {
 }
 
 func (c *Cluster) handleBroadcastMsg(data []byte) {
-	var msg SubBroadcast
-	if err := json.Unmarshal(data, &msg); err != nil {
-		log.Printf("cluster: unmarshal broadcast: %v", err)
+	var peek struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &peek); err != nil {
+		log.Printf("cluster: unmarshal broadcast peek: %v", err)
 		return
 	}
-	if msg.NodeID == c.self.ID {
-		return
+
+	switch peek.Type {
+	case "sub", "unsub":
+		var msg SubBroadcast
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("cluster: unmarshal sub broadcast: %v", err)
+			return
+		}
+		if msg.NodeID == c.self.ID {
+			return
+		}
+		HandleSubBroadcast(c.remoteSubs, msg)
+	case "conn", "disconn":
+		var msg ConnBroadcast
+		if err := json.Unmarshal(data, &msg); err != nil {
+			log.Printf("cluster: unmarshal conn broadcast: %v", err)
+			return
+		}
+		if msg.NodeID == c.self.ID {
+			return
+		}
+		HandleConnBroadcast(c.connections, msg)
+		if msg.Type == "conn" && c.onRemoteConnect != nil {
+			c.onRemoteConnect(msg.DeviceID, msg.NodeID)
+		}
+	default:
+		log.Printf("cluster: unknown broadcast type: %s", peek.Type)
 	}
-	HandleSubBroadcast(c.remoteSubs, msg)
 }
 
 func (c *Cluster) rebroadcastLocalSubs(localFilters []string) {
 	for _, filter := range localFilters {
 		c.BroadcastSubscribe(filter, 2)
+	}
+}
+
+func (c *Cluster) rebroadcastLocalConnections(deviceIDs []string) {
+	for _, deviceID := range deviceIDs {
+		c.BroadcastConnect(deviceID)
 	}
 }
 
@@ -251,4 +292,30 @@ func (c *Cluster) IsLocal(deviceID string) bool {
 // Size returns the number of nodes in the cluster.
 func (c *Cluster) Size() int {
 	return c.ring.Size()
+}
+
+// Connections returns the connection index.
+func (c *Cluster) Connections() *ConnectionIndex { return c.connections }
+
+// BroadcastConnect queues a connect broadcast via gossip.
+func (c *Cluster) BroadcastConnect(deviceID string) {
+	msg := ConnBroadcast{Type: "conn", NodeID: c.self.ID, DeviceID: deviceID}
+	c.broadcasts.QueueBroadcast(&connBroadcastItem{msg: msg})
+}
+
+// BroadcastDisconnect queues a disconnect broadcast via gossip.
+func (c *Cluster) BroadcastDisconnect(deviceID string) {
+	msg := ConnBroadcast{Type: "disconn", NodeID: c.self.ID, DeviceID: deviceID}
+	c.broadcasts.QueueBroadcast(&connBroadcastItem{msg: msg})
+}
+
+// SetRemoteConnectHandler sets the callback invoked when a remote node
+// claims a device. The broker uses this to disconnect the local session.
+func (c *Cluster) SetRemoteConnectHandler(fn func(deviceID, nodeID string)) {
+	c.onRemoteConnect = fn
+}
+
+// SetLocalDevicesProvider sets a function that returns locally connected device IDs.
+func (c *Cluster) SetLocalDevicesProvider(fn func() []string) {
+	c.localDevicesProvider = fn
 }

@@ -96,6 +96,31 @@ func TestSubscriptionIndex_NoDoubleMatch(t *testing.T) {
 	}
 }
 
+func TestSubscriptionIndex_AllFilters(t *testing.T) {
+	idx := NewSubscriptionIndex()
+	idx.Add("client-1", "sensor/temp", 1)
+	idx.Add("client-2", "sensor/temp", 0)
+	idx.Add("client-1", "light/#", 2)
+
+	filters := idx.AllFilters()
+	if len(filters) != 2 {
+		t.Fatalf("expected 2 unique filters, got %d", len(filters))
+	}
+
+	expected := map[string]bool{"sensor/temp": false, "light/#": false}
+	for _, f := range filters {
+		if _, ok := expected[f]; !ok {
+			t.Errorf("unexpected filter: %s", f)
+		}
+		expected[f] = true
+	}
+	for f, found := range expected {
+		if !found {
+			t.Errorf("missing filter: %s", f)
+		}
+	}
+}
+
 func matchClientIDs(matches []SubscriptionMatch) []string {
 	ids := make([]string, len(matches))
 	for i, m := range matches {

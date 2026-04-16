@@ -96,6 +96,19 @@ func (idx *SubscriptionIndex) RemoveAll(clientID string) {
 	delete(idx.clients, clientID)
 }
 
+// AllFilters returns all unique topic filters with active subscriptions.
+// Used to re-broadcast subscriptions when a new node joins the cluster.
+func (idx *SubscriptionIndex) AllFilters() []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	filters := make([]string, 0, len(idx.filters))
+	for filter := range idx.filters {
+		filters = append(filters, filter)
+	}
+	return filters
+}
+
 func (idx *SubscriptionIndex) Match(topic string) []SubscriptionMatch {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()

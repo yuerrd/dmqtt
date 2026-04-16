@@ -3,11 +3,13 @@ package broker
 import (
 	"bytes"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/langzp/dmqtt/internal/codec"
+	"github.com/langzp/dmqtt/internal/storage"
 )
 
 func mqttConnect(t *testing.T, conn net.Conn, clientID string, cleanSession bool) {
@@ -106,6 +108,93 @@ func writeUTF8(buf *bytes.Buffer, s string) {
 	buf.WriteByte(byte(len(s) >> 8))
 	buf.WriteByte(byte(len(s)))
 	buf.WriteString(s)
+}
+
+func connectClient(t *testing.T, addr, clientID string, cleanSession bool) net.Conn {
+	t.Helper()
+	conn := dial(t, addr)
+	mqttConnect(t, conn, clientID, cleanSession)
+	return conn
+}
+
+func connectClientCleanSession(t *testing.T, addr, clientID string, cleanSession bool) net.Conn {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var varHeader []byte
+	varHeader = append(varHeader, 0, 4)
+	varHeader = append(varHeader, []byte("MQTT")...)
+	varHeader = append(varHeader, 4)
+	flags := byte(0)
+	if cleanSession {
+		flags |= 0x02
+	}
+	varHeader = append(varHeader, flags)
+	varHeader = append(varHeader, 0, 60)
+	idBytes := []byte(clientID)
+	varHeader = append(varHeader, byte(len(idBytes)>>8), byte(len(idBytes)))
+	varHeader = append(varHeader, idBytes...)
+
+	fh := codec.FixedHeader{
+		PacketType:      codec.CONNECT,
+		RemainingLength: len(varHeader),
+	}
+	conn.Write(append(fh.Encode(), varHeader...))
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	rfh, data, err := codec.ReadPacket(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rfh.PacketType != codec.CONNACK {
+		t.Fatalf("expected CONNACK, got %s", codec.PacketTypeName(rfh.PacketType))
+	}
+	if len(data) < 2 || data[1] != codec.ConnackAccepted {
+		t.Fatalf("CONNACK return code: %v", data)
+	}
+	conn.SetReadDeadline(time.Time{})
+	return conn
+}
+
+func subscribeQoS(t *testing.T, conn net.Conn, filter string, qos byte, packetID uint16) {
+	t.Helper()
+	var buf []byte
+	buf = append(buf, byte(packetID>>8), byte(packetID))
+	topicBytes := []byte(filter)
+	buf = append(buf, byte(len(topicBytes)>>8), byte(len(topicBytes)))
+	buf = append(buf, topicBytes...)
+	buf = append(buf, qos)
+
+	fh := codec.FixedHeader{
+		PacketType:      codec.SUBSCRIBE,
+		QoS:             1,
+		RemainingLength: len(buf),
+	}
+	conn.Write(append(fh.Encode(), buf...))
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	rfh, _, err := codec.ReadPacket(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rfh.PacketType != codec.SUBACK {
+		t.Fatalf("expected SUBACK, got %s", codec.PacketTypeName(rfh.PacketType))
+	}
+	conn.SetReadDeadline(time.Time{})
+}
+
+func publishQoS1(t *testing.T, conn net.Conn, topic string, payload []byte, packetID uint16) {
+	t.Helper()
+	pkt := &codec.PublishPacket{
+		Topic:    topic,
+		Payload:  payload,
+		QoS:      1,
+		PacketID: packetID,
+	}
+	conn.Write(pkt.Encode())
 }
 
 func TestBroker_ConnectDisconnect(t *testing.T) {
@@ -281,3 +370,222 @@ func waitForBroker(t *testing.T, b *Broker) {
 	}
 	t.Fatal("broker did not start in time")
 }
+
+func TestBroker_PubSubQoS1(t *testing.T) {
+	b := New(":0", nil)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	addr := b.Addr()
+
+	sub := connectClient(t, addr, "sub-qos1", true)
+	defer sub.Close()
+	subscribeQoS(t, sub, "test/qos1", 1, 1)
+
+	time.Sleep(50 * time.Millisecond)
+
+	pub := connectClient(t, addr, "pub-qos1", true)
+	defer pub.Close()
+
+	publishQoS1(t, pub, "test/qos1", []byte("hello-qos1"), 1)
+
+	// Read PUBACK from broker
+	pub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err := codec.ReadPacket(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBACK {
+		t.Fatalf("expected PUBACK, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	puback, err := codec.DecodePubackPacket(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if puback.PacketID != 1 {
+		t.Fatalf("expected packet ID 1, got %d", puback.PacketID)
+	}
+	pub.SetReadDeadline(time.Time{})
+
+	// Subscriber should receive PUBLISH
+	sub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err = codec.ReadPacket(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBLISH {
+		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	pubPkt, err := codec.DecodePublishPacket(data, fh.QoS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(pubPkt.Payload) != "hello-qos1" {
+		t.Fatalf("expected hello-qos1, got %s", pubPkt.Payload)
+	}
+	sub.SetReadDeadline(time.Time{})
+}
+
+func TestBroker_PubSubQoS2(t *testing.T) {
+	b := New(":0", nil)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	addr := b.Addr()
+
+	pub := connectClient(t, addr, "pub-qos2", true)
+	defer pub.Close()
+
+	pkt := &codec.PublishPacket{
+		Topic:    "test/qos2",
+		Payload:  []byte("exactly-once"),
+		QoS:      2,
+		PacketID: 1,
+	}
+	pub.Write(pkt.Encode())
+
+	// Expect PUBREC
+	pub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err := codec.ReadPacket(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBREC {
+		t.Fatalf("expected PUBREC, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	pubrec, _ := codec.DecodePubrecPacket(data)
+	if pubrec.PacketID != 1 {
+		t.Fatalf("expected packet ID 1, got %d", pubrec.PacketID)
+	}
+
+	// Send PUBREL
+	pubrel := &codec.PubrelPacket{PacketID: 1}
+	pub.Write(pubrel.Encode())
+
+	// Expect PUBCOMP
+	fh, data, err = codec.ReadPacket(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBCOMP {
+		t.Fatalf("expected PUBCOMP, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	pubcomp, _ := codec.DecodePubcompPacket(data)
+	if pubcomp.PacketID != 1 {
+		t.Fatalf("expected packet ID 1, got %d", pubcomp.PacketID)
+	}
+	pub.SetReadDeadline(time.Time{})
+}
+
+func TestBroker_OfflineMessages(t *testing.T) {
+	b := New(":0", nil)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	addr := b.Addr()
+
+	// Connect subscriber with persistent session (CleanSession=false)
+	sub := connectClientCleanSession(t, addr, "offline-sub", false)
+	subscribeQoS(t, sub, "test/offline", 1, 1)
+
+	// Disconnect subscriber (close without DISCONNECT = abnormal disconnect, keeps session)
+	sub.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Publish while subscriber is offline
+	pub := connectClient(t, addr, "pub-offline", true)
+	publishQoS1(t, pub, "test/offline", []byte("queued-msg"), 1)
+	// Read PUBACK
+	pub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	codec.ReadPacket(pub)
+	pub.SetReadDeadline(time.Time{})
+	pub.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Reconnect subscriber with persistent session
+	sub2 := connectClientCleanSession(t, addr, "offline-sub", false)
+	defer sub2.Close()
+
+	// Should receive the offline message
+	sub2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err := codec.ReadPacket(sub2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBLISH {
+		t.Fatalf("expected PUBLISH (offline msg), got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS)
+	if string(pubPkt.Payload) != "queued-msg" {
+		t.Fatalf("expected queued-msg, got %s", pubPkt.Payload)
+	}
+	sub2.SetReadDeadline(time.Time{})
+}
+
+func TestBroker_PersistentSessionRecovery(t *testing.T) {
+	dir, err := os.MkdirTemp("", "broker-persist-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	store, err := storage.NewPebbleStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start broker with storage, create a persistent session
+	b1 := New(":0", store)
+	go b1.Start()
+	waitForBroker(t, b1)
+
+	sub := connectClientCleanSession(t, b1.Addr(), "persist-client", false)
+	subscribeQoS(t, sub, "test/persist", 1, 1)
+	sub.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	b1.Stop()
+	store.Close()
+
+	// Reopen storage and start new broker
+	store2, err := storage.NewPebbleStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+
+	b2 := New(":0", store2)
+	go b2.Start()
+	defer b2.Stop()
+	waitForBroker(t, b2)
+
+	// Reconnect — session should be restored
+	sub2 := connectClientCleanSession(t, b2.Addr(), "persist-client", false)
+	defer sub2.Close()
+
+	// Publish — subscriber should receive because subscription was restored from Pebble
+	pub := connectClient(t, b2.Addr(), "persist-pub", true)
+	publishQoS1(t, pub, "test/persist", []byte("after-restart"), 1)
+	pub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	codec.ReadPacket(pub) // PUBACK
+	pub.SetReadDeadline(time.Time{})
+	pub.Close()
+
+	sub2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err := codec.ReadPacket(sub2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fh.PacketType != codec.PUBLISH {
+		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS)
+	if string(pubPkt.Payload) != "after-restart" {
+		t.Fatalf("expected after-restart, got %s", pubPkt.Payload)
+	}
+	sub2.SetReadDeadline(time.Time{})
+}
+

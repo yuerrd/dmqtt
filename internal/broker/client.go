@@ -347,6 +347,13 @@ func (c *Client) close() {
 
 		session := c.broker.sessions.Get(c.clientID)
 		if session != nil && session.CleanSession {
+			// Broadcast unsubscribe for each filter before removing
+			if c.broker.cluster != nil {
+				filters := c.broker.subscriptions.ClientFilters(c.clientID)
+				for _, filter := range filters {
+					c.broker.cluster.BroadcastUnsubscribe(filter)
+				}
+			}
 			c.broker.subscriptions.RemoveAll(c.clientID)
 			c.broker.sessions.Remove(c.clientID)
 			c.broker.offlineStore.RemoveAll(c.clientID)

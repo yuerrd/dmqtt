@@ -78,11 +78,12 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 	}
 
 	self := NodeInfo{
-		ID:         cfg.NodeID,
-		Host:       cfg.Host,
-		GossipPort: cfg.GossipPort,
-		MQTTPort:   cfg.MQTTPort,
-		Region:     cfg.Region,
+		ID:            cfg.NodeID,
+		Host:          cfg.Host,
+		GossipPort:    cfg.GossipPort,
+		TransportPort: cfg.TransportPort,
+		MQTTPort:      cfg.MQTTPort,
+		Region:        cfg.Region,
 	}
 
 	ring := NewRing(cfg.VirtualNodes)
@@ -139,7 +140,7 @@ func (c *Cluster) eventLoop() {
 			case NodeJoin:
 				log.Printf("cluster: node %s joined", ev.Node.ID)
 				if ev.Node.ID != c.self.ID {
-					c.transport.AddPeer(ev.Node.ID, fmt.Sprintf("%s:%d", ev.Node.Host, ev.Node.GossipPort+1000))
+					c.transport.AddPeer(ev.Node.ID, fmt.Sprintf("%s:%d", ev.Node.Host, ev.Node.TransportPort))
 					if c.localFiltersProvider != nil {
 						go c.rebroadcastLocalSubs(c.localFiltersProvider())
 					}

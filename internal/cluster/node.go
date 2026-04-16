@@ -7,11 +7,12 @@ import (
 
 // NodeInfo identifies a node in the cluster.
 type NodeInfo struct {
-	ID         string `json:"id"`
-	Host       string `json:"host"`
-	GossipPort int    `json:"gossipPort"`
-	MQTTPort   int    `json:"mqttPort"`
-	Region     string `json:"region,omitempty"`
+	ID            string `json:"id"`
+	Host          string `json:"host"`
+	GossipPort    int    `json:"gossipPort"`
+	TransportPort int    `json:"transportPort"`
+	MQTTPort      int    `json:"mqttPort"`
+	Region        string `json:"region,omitempty"`
 }
 
 // GossipAddr returns the address for memberlist communication.

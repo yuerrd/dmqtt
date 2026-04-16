@@ -313,12 +313,14 @@ func (pt *PeerTransport) Stop() error {
 
 	pt.mu.Lock()
 	for nodeID, pc := range pt.peers {
-		close(pc.done)
 		pc.mu.Lock()
+		if !pc.closed {
+			close(pc.done)
+			pc.closed = true
+		}
 		if pc.conn != nil {
 			pc.conn.Close()
 		}
-		pc.closed = true
 		pc.mu.Unlock()
 		delete(pt.peers, nodeID)
 	}

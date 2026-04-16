@@ -109,6 +109,22 @@ func (idx *SubscriptionIndex) AllFilters() []string {
 	return filters
 }
 
+// ClientFilters returns all topic filters for a specific client.
+func (idx *SubscriptionIndex) ClientFilters(clientID string) []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	filterMap, ok := idx.clients[clientID]
+	if !ok {
+		return nil
+	}
+	filters := make([]string, 0, len(filterMap))
+	for f := range filterMap {
+		filters = append(filters, f)
+	}
+	return filters
+}
+
 func (idx *SubscriptionIndex) Match(topic string) []SubscriptionMatch {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()

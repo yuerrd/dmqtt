@@ -138,6 +138,12 @@ func (b *Broker) SetCluster(c *cluster.Cluster) {
 		c.SetLocalFiltersProvider(func() []string {
 			return b.subscriptions.AllFilters()
 		})
+		c.SetRemoteConnectHandler(func(deviceID, nodeID string) {
+			b.disconnectExisting(deviceID)
+		})
+		c.SetLocalDevicesProvider(func() []string {
+			return b.ConnectedClientIDs()
+		})
 	}
 }
 
@@ -221,4 +227,15 @@ func (b *Broker) ClientCount() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return len(b.clients)
+}
+
+// ConnectedClientIDs returns all currently connected client IDs.
+func (b *Broker) ConnectedClientIDs() []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	ids := make([]string, 0, len(b.clients))
+	for id := range b.clients {
+		ids = append(ids, id)
+	}
+	return ids
 }

@@ -129,6 +129,10 @@ func (c *Client) handleConnect() error {
 
 	c.broker.registerClient(c)
 
+	if c.broker.cluster != nil {
+		c.broker.cluster.BroadcastConnect(c.clientID)
+	}
+
 	connack := &codec.ConnackPacket{
 		SessionPresent: sessionPresent,
 		ReturnCode:     codec.ConnackAccepted,
@@ -337,6 +341,10 @@ func (c *Client) close() {
 
 	if c.clientID != "" {
 		c.broker.unregisterClient(c)
+
+		if c.broker.cluster != nil {
+			c.broker.cluster.BroadcastDisconnect(c.clientID)
+		}
 
 		if c.will != nil {
 			if c.will.Retain {

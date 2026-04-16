@@ -173,7 +173,7 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		c.broker.retainStore.Set(pkt.Topic, pkt.Payload, fh.QoS)
 	}
 
-	c.broker.routeMessage(pkt.Topic, pkt.Payload, fh.QoS, fh.Retain)
+	c.broker.routeMessage(pkt.Topic, pkt.Payload, fh.QoS, fh.Retain, false)
 }
 
 func (c *Client) handlePuback(data []byte) {
@@ -262,6 +262,9 @@ func (c *Client) handleSubscribe(data []byte) {
 			session.Subscriptions[sub.TopicFilter] = grantedQoS
 		}
 		returnCodes[i] = grantedQoS
+		if c.broker.cluster != nil {
+			c.broker.cluster.BroadcastSubscribe(sub.TopicFilter, grantedQoS)
+		}
 	}
 
 	c.broker.sessions.Save(c.clientID)
@@ -297,6 +300,9 @@ func (c *Client) handleUnsubscribe(data []byte) {
 	session := c.broker.sessions.Get(c.clientID)
 	for _, filter := range pkt.TopicFilters {
 		c.broker.subscriptions.Remove(c.clientID, filter)
+		if c.broker.cluster != nil {
+			c.broker.cluster.BroadcastUnsubscribe(filter)
+		}
 		if session != nil {
 			delete(session.Subscriptions, filter)
 		}
@@ -336,7 +342,7 @@ func (c *Client) close() {
 			if c.will.Retain {
 				c.broker.retainStore.Set(c.will.Topic, c.will.Payload, c.will.QoS)
 			}
-			c.broker.routeMessage(c.will.Topic, c.will.Payload, c.will.QoS, false)
+			c.broker.routeMessage(c.will.Topic, c.will.Payload, c.will.QoS, false, false)
 		}
 
 		session := c.broker.sessions.Get(c.clientID)

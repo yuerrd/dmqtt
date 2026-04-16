@@ -127,9 +127,18 @@ func (b *Broker) Addr() string {
 	return b.listener.Addr()
 }
 
-// SetCluster attaches a cluster to the broker. Must be called before Start().
+// SetCluster attaches a cluster to the broker and registers handlers.
+// Must be called before Start().
 func (b *Broker) SetCluster(c *cluster.Cluster) {
 	b.cluster = c
+	if c != nil {
+		c.SetForwardHandler(func(msg cluster.ForwardMessage) {
+			b.routeMessage(msg.Topic, msg.Payload, msg.QoS, msg.Retain, true)
+		})
+		c.SetLocalFiltersProvider(func() []string {
+			return b.subscriptions.AllFilters()
+		})
+	}
 }
 
 // Cluster returns the attached cluster, or nil if standalone.
@@ -164,12 +173,10 @@ func (b *Broker) disconnectExisting(clientID string) {
 	}
 }
 
-func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain bool) {
+func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain bool, forwarded bool) {
 	matches := b.subscriptions.Match(topic)
 
 	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	for _, match := range matches {
 		effectiveQoS := qos
 		if match.QoS < effectiveQoS {
@@ -188,6 +195,24 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 					QoS:     effectiveQoS,
 				})
 			}
+		}
+	}
+	b.mu.RUnlock()
+
+	// Remote forwarding (only if not already forwarded and cluster is active)
+	if !forwarded && b.cluster != nil {
+		remoteMatches := b.cluster.RemoteSubs().Match(topic)
+		for _, rm := range remoteMatches {
+			effectiveQoS := qos
+			if rm.MaxQoS < effectiveQoS {
+				effectiveQoS = rm.MaxQoS
+			}
+			b.cluster.Forward(rm.NodeID, cluster.ForwardMessage{
+				Topic:   topic,
+				Payload: payload,
+				QoS:     effectiveQoS,
+				Retain:  retain,
+			})
 		}
 	}
 }

@@ -33,15 +33,16 @@ func main() {
 
 	if cfg.Cluster.Enabled {
 		clusterCfg := cluster.ClusterConfig{
-			Enabled:      true,
-			Name:         cfg.Cluster.Name,
-			NodeID:       cfg.Cluster.NodeID,
-			Host:         cfg.Cluster.Host,
-			GossipPort:   cfg.Cluster.GossipPort,
-			MQTTPort:     1883,
-			Seeds:        cfg.Cluster.Seeds,
-			VirtualNodes: cfg.Cluster.VirtualNodes,
-			ReplicaCount: cfg.Cluster.ReplicaCount,
+			Enabled:       true,
+			Name:          cfg.Cluster.Name,
+			NodeID:        cfg.Cluster.NodeID,
+			Host:          cfg.Cluster.Host,
+			GossipPort:    cfg.Cluster.GossipPort,
+			TransportPort: cfg.Cluster.TransportPort,
+			MQTTPort:      1883,
+			Seeds:         cfg.Cluster.Seeds,
+			VirtualNodes:  cfg.Cluster.VirtualNodes,
+			ReplicaCount:  cfg.Cluster.ReplicaCount,
 		}
 
 		c, err := cluster.NewCluster(clusterCfg)

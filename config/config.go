@@ -49,6 +49,9 @@ type ClusterConfig struct {
 	// GossipPort is the port for memberlist communication (default: 7000)
 	GossipPort int
 
+	// TransportPort is the port for inter-node message forwarding (default: GossipPort+1000)
+	TransportPort int
+
 	// Seeds is a list of existing node gossip addresses to join
 	Seeds []string
 

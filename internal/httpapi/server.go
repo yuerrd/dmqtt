@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -49,7 +50,11 @@ func (s *Server) Start() error {
 	}
 	s.listener = ln
 
-	go s.httpServer.Serve(ln)
+	go func() {
+		if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+			slog.Error("HTTP server error", "error", err)
+		}
+	}()
 	return nil
 }
 

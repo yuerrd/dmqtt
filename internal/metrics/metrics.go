@@ -30,8 +30,8 @@ var (
 		Help: "Total messages delivered to subscribers.",
 	}, []string{"qos"})
 	messagesForwarded = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "mqtt_messages_forwarded_total",
-		Help: "Total messages forwarded to remote cluster nodes.",
+		Name: "mqtt_message_forwards_total",
+		Help: "Total message forward operations to remote cluster nodes.",
 	})
 	subscriptionsActive = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "mqtt_subscriptions_active",

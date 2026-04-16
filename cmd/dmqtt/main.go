@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,23 +10,30 @@ import (
 	"github.com/langzp/dmqtt/config"
 	"github.com/langzp/dmqtt/internal/broker"
 	"github.com/langzp/dmqtt/internal/cluster"
+	"github.com/langzp/dmqtt/internal/httpapi"
+	"github.com/langzp/dmqtt/internal/logging"
+	"github.com/langzp/dmqtt/internal/metrics"
 	"github.com/langzp/dmqtt/internal/storage"
 )
 
 func main() {
 	cfg := config.DefaultConfig()
 
+	// Initialize structured logging first
+	logging.Init(cfg.LogLevel)
+
 	var store storage.Store
 	if cfg.DataDir != "" {
 		var err error
 		store, err = storage.NewPebbleStore(cfg.DataDir)
 		if err != nil {
-			log.Fatalf("Failed to open storage at %s: %v", cfg.DataDir, err)
+			slog.Error("failed to open storage", "path", cfg.DataDir, "error", err)
+			os.Exit(1)
 		}
 		defer store.Close()
-		log.Printf("Storage opened at %s", cfg.DataDir)
+		slog.Info("storage opened", "path", cfg.DataDir)
 	} else {
-		log.Println("Running in-memory mode (no persistence)")
+		slog.Info("running in-memory mode, no persistence")
 	}
 
 	b := broker.New(cfg.TCPAddr, store)
@@ -47,23 +54,41 @@ func main() {
 
 		c, err := cluster.NewCluster(clusterCfg)
 		if err != nil {
-			log.Fatalf("Failed to create cluster: %v", err)
+			slog.Error("failed to create cluster", "error", err)
+			os.Exit(1)
 		}
 		b.SetCluster(c)
-		log.Printf("Cluster mode: node %s, gossip on :%d", cfg.Cluster.NodeID, cfg.Cluster.GossipPort)
+		slog.Info("cluster mode enabled", "node", cfg.Cluster.NodeID, "gossipPort", cfg.Cluster.GossipPort)
 
 		defer func() {
-			log.Println("Leaving cluster...")
+			slog.Info("leaving cluster")
 			c.Stop()
 		}()
 	} else {
-		log.Println("Running in standalone mode (no cluster)")
+		slog.Info("running in standalone mode, no cluster")
 	}
 
-	if err := b.Start(); err != nil {
-		log.Fatalf("Failed to start broker: %v", err)
+	// Start HTTP API server (metrics + health)
+	httpSrv := httpapi.New(cfg.HTTPAddr, b)
+	if err := httpSrv.Start(); err != nil {
+		slog.Error("failed to start HTTP API", "addr", cfg.HTTPAddr, "error", err)
+		os.Exit(1)
 	}
-	fmt.Printf("DMQTT listening on %s\n", b.Addr())
+	slog.Info("HTTP API listening", "addr", httpSrv.Addr())
+	defer httpSrv.Stop()
+
+	// Start metrics collector
+	done := make(chan struct{})
+	metrics.StartCollector(b, done)
+	defer close(done)
+
+	// Start MQTT broker (blocking until Stop)
+	go func() {
+		if err := b.Start(); err != nil {
+			slog.Error("broker start failed", "error", err)
+			os.Exit(1)
+		}
+	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

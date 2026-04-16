@@ -8,19 +8,45 @@ import (
 	"syscall"
 
 	"github.com/langzp/dmqtt/config"
+	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/broker"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/httpapi"
 	"github.com/langzp/dmqtt/internal/logging"
 	"github.com/langzp/dmqtt/internal/metrics"
 	"github.com/langzp/dmqtt/internal/storage"
+	"github.com/langzp/dmqtt/internal/transport"
 )
 
 func main() {
 	cfg := config.DefaultConfig()
 
-	// Initialize structured logging first
 	logging.Init(cfg.LogLevel)
+
+	// Validate TLS config
+	if cfg.TLSAddr != "" && (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") {
+		slog.Error("TLSAddr requires TLSCertFile and TLSKeyFile")
+		os.Exit(1)
+	}
+
+	// Load authentication
+	var authn auth.Authenticator
+	var authz auth.Authorizer
+	if cfg.AuthFile != "" {
+		creds, err := auth.LoadCredentials(cfg.AuthFile)
+		if err != nil {
+			slog.Error("failed to load auth file", "path", cfg.AuthFile, "error", err)
+			os.Exit(1)
+		}
+		authn = creds
+		authz = creds
+		slog.Info("authentication enabled", "file", cfg.AuthFile)
+	} else {
+		noop := &auth.NoopAuth{}
+		authn = noop
+		authz = noop
+		slog.Info("running without authentication")
+	}
 
 	var store storage.Store
 	if cfg.DataDir != "" {
@@ -37,6 +63,7 @@ func main() {
 	}
 
 	b := broker.New(cfg.TCPAddr, store)
+	b.SetAuth(authn, authz)
 
 	if cfg.Cluster.Enabled {
 		clusterCfg := cluster.ClusterConfig{
@@ -68,7 +95,6 @@ func main() {
 		slog.Info("running in standalone mode, no cluster")
 	}
 
-	// Start HTTP API server (metrics + health)
 	httpSrv := httpapi.New(cfg.HTTPAddr, b)
 	if err := httpSrv.Start(); err != nil {
 		slog.Error("failed to start HTTP API", "addr", cfg.HTTPAddr, "error", err)
@@ -77,15 +103,34 @@ func main() {
 	slog.Info("HTTP API listening", "addr", httpSrv.Addr())
 	defer httpSrv.Stop()
 
-	// Start metrics collector
 	done := make(chan struct{})
 	metrics.StartCollector(b, done)
 	defer close(done)
 
-	// Start MQTT broker (blocking until Stop)
+	// Build listener list
+	var listeners []transport.Listener
+
+	tcpLn, err := transport.NewTCPListener(cfg.TCPAddr)
+	if err != nil {
+		slog.Error("failed to create TCP listener", "addr", cfg.TCPAddr, "error", err)
+		os.Exit(1)
+	}
+	listeners = append(listeners, tcpLn)
+
+	if cfg.TLSAddr != "" {
+		tlsLn, err := transport.NewTLSListener(cfg.TLSAddr, cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			slog.Error("failed to create TLS listener", "addr", cfg.TLSAddr, "error", err)
+			os.Exit(1)
+		}
+		listeners = append(listeners, tlsLn)
+		slog.Info("TLS listener enabled", "addr", tlsLn.Addr())
+	}
+
+	// Start broker with all listeners
 	go func() {
-		if err := b.Start(); err != nil {
-			slog.Error("broker start failed", "error", err)
+		if err := b.Serve(listeners...); err != nil {
+			slog.Error("broker serve failed", "error", err)
 			os.Exit(1)
 		}
 	}()

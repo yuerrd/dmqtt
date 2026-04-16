@@ -36,6 +36,18 @@ type Config struct {
 
 	// HTTP API address for metrics and health (default: ":9090")
 	HTTPAddr string
+
+	// Authentication credentials file (JSON). Empty = no auth (NoopAuth).
+	AuthFile string
+
+	// TLS listener address (e.g., ":8883"). Empty = TLS disabled.
+	TLSAddr string
+
+	// Path to TLS certificate file (PEM). Required if TLSAddr is set.
+	TLSCertFile string
+
+	// Path to TLS private key file (PEM). Required if TLSAddr is set.
+	TLSKeyFile string
 }
 
 // ClusterConfig holds cluster-related settings.

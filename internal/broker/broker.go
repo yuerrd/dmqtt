@@ -3,8 +3,8 @@ package broker
 import (
 	"log"
 	"sync"
+	"time"
 
-	"github.com/langzp/dmqtt/internal/codec"
 	"github.com/langzp/dmqtt/internal/transport"
 )
 
@@ -15,6 +15,9 @@ type Broker struct {
 	subscriptions *SubscriptionIndex
 	sessions      *SessionStore
 	retainStore   *RetainStore
+	dedupStore    *DedupStore
+	offlineStore  *OfflineStore
+	inflightLimit int
 
 	mu      sync.RWMutex
 	clients map[string]*Client
@@ -28,6 +31,9 @@ func New(addr string) *Broker {
 		subscriptions: NewSubscriptionIndex(),
 		sessions:      NewSessionStore(),
 		retainStore:   NewRetainStore(),
+		dedupStore:    NewDedupStore(180 * time.Second),
+		offlineStore:  NewOfflineStore(1000, 24*time.Hour),
+		inflightLimit: 20,
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
 	}
@@ -124,20 +130,24 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 	defer b.mu.RUnlock()
 
 	for _, match := range matches {
+		effectiveQoS := qos
+		if match.QoS < effectiveQoS {
+			effectiveQoS = match.QoS
+		}
+
 		client, ok := b.clients[match.ClientID]
-		if !ok {
-			continue
+		if ok {
+			client.deliverMessage(topic, payload, effectiveQoS)
+		} else {
+			session := b.sessions.Get(match.ClientID)
+			if session != nil && !session.CleanSession {
+				b.offlineStore.Enqueue(match.ClientID, &OfflineMessage{
+					Topic:   topic,
+					Payload: payload,
+					QoS:     effectiveQoS,
+				})
+			}
 		}
-
-		// Phase 1 simplified: forward all as QoS 0
-		pubPkt := &codec.PublishPacket{
-			Topic:   topic,
-			QoS:     0,
-			Retain:  false,
-			Payload: payload,
-		}
-
-		go client.send(pubPkt.Encode())
 	}
 }
 

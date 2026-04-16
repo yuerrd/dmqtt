@@ -5,16 +5,19 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/langzp/dmqtt/internal/codec"
 )
 
 // Client represents a connected MQTT client.
 type Client struct {
-	conn     net.Conn
-	broker   *Broker
-	clientID string
-	will     *WillMessage
+	conn      net.Conn
+	broker    *Broker
+	clientID  string
+	will      *WillMessage
+	packetIDs *PacketIDAllocator
+	inflight  *InflightStore
 
 	mu     sync.Mutex
 	closed bool
@@ -22,8 +25,10 @@ type Client struct {
 
 func newClient(conn net.Conn, b *Broker) *Client {
 	return &Client{
-		conn:   conn,
-		broker: b,
+		conn:      conn,
+		broker:    b,
+		packetIDs: NewPacketIDAllocator(),
+		inflight:  NewInflightStore(b.inflightLimit),
 	}
 }
 
@@ -46,7 +51,13 @@ func (c *Client) serve() {
 		case codec.PUBLISH:
 			c.handlePublish(fh, data)
 		case codec.PUBACK:
-			// QoS 1 acknowledgement — no action needed for basic implementation
+			c.handlePuback(data)
+		case codec.PUBREC:
+			c.handlePubrec(data)
+		case codec.PUBREL:
+			c.handlePubrel(data)
+		case codec.PUBCOMP:
+			c.handlePubcomp(data)
 		case codec.SUBSCRIBE:
 			c.handleSubscribe(data)
 		case codec.UNSUBSCRIBE:
@@ -124,6 +135,13 @@ func (c *Client) handleConnect() error {
 	}
 	c.send(connack.Encode())
 
+	if sessionPresent {
+		offlineMsgs := c.broker.offlineStore.Dequeue(c.clientID, 100)
+		for _, msg := range offlineMsgs {
+			c.deliverMessage(msg.Topic, msg.Payload, msg.QoS)
+		}
+	}
+
 	return nil
 }
 
@@ -134,9 +152,21 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		return
 	}
 
-	if fh.QoS == 1 {
+	switch fh.QoS {
+	case 0:
+		// fire and forget
+	case 1:
 		puback := &codec.PubackPacket{PacketID: pkt.PacketID}
 		c.send(puback.Encode())
+	case 2:
+		if c.broker.dedupStore.IsDuplicate(c.clientID, pkt.PacketID) {
+			pubrec := &codec.PubrecPacket{PacketID: pkt.PacketID}
+			c.send(pubrec.Encode())
+			return
+		}
+		c.broker.dedupStore.MarkReceived(c.clientID, pkt.PacketID)
+		pubrec := &codec.PubrecPacket{PacketID: pkt.PacketID}
+		c.send(pubrec.Encode())
 	}
 
 	if fh.Retain {
@@ -144,6 +174,66 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 	}
 
 	c.broker.routeMessage(pkt.Topic, pkt.Payload, fh.QoS, fh.Retain)
+}
+
+func (c *Client) handlePuback(data []byte) {
+	pkt, err := codec.DecodePubackPacket(data)
+	if err != nil {
+		log.Printf("[%s] decode PUBACK error: %v", c.clientID, err)
+		return
+	}
+	c.inflight.Remove(pkt.PacketID)
+}
+
+func (c *Client) handlePubrec(data []byte) {
+	pkt, err := codec.DecodePubrecPacket(data)
+	if err != nil {
+		log.Printf("[%s] decode PUBREC error: %v", c.clientID, err)
+		return
+	}
+	c.inflight.Remove(pkt.PacketID)
+	pubrel := &codec.PubrelPacket{PacketID: pkt.PacketID}
+	c.send(pubrel.Encode())
+}
+
+func (c *Client) handlePubrel(data []byte) {
+	pkt, err := codec.DecodePubrelPacket(data)
+	if err != nil {
+		log.Printf("[%s] decode PUBREL error: %v", c.clientID, err)
+		return
+	}
+	c.broker.dedupStore.Remove(c.clientID, pkt.PacketID)
+	pubcomp := &codec.PubcompPacket{PacketID: pkt.PacketID}
+	c.send(pubcomp.Encode())
+}
+
+func (c *Client) handlePubcomp(data []byte) {
+	_, _ = codec.DecodePubcompPacket(data)
+}
+
+func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
+	pkt := &codec.PublishPacket{
+		Topic:   topic,
+		Payload: payload,
+		QoS:     qos,
+		Retain:  false,
+	}
+
+	if qos > 0 {
+		pkt.PacketID = c.packetIDs.Next()
+		msg := &InflightMessage{
+			PacketID:  pkt.PacketID,
+			Topic:     topic,
+			Payload:   payload,
+			QoS:       qos,
+			Timestamp: time.Now(),
+		}
+		if !c.inflight.Add(msg) {
+			return
+		}
+	}
+
+	go c.send(pkt.Encode())
 }
 
 func (c *Client) handleSubscribe(data []byte) {
@@ -163,8 +253,8 @@ func (c *Client) handleSubscribe(data []byte) {
 		}
 
 		grantedQoS := sub.QoS
-		if grantedQoS > 1 {
-			grantedQoS = 1
+		if grantedQoS > 2 {
+			grantedQoS = 2
 		}
 
 		c.broker.subscriptions.Add(c.clientID, sub.TopicFilter, grantedQoS)
@@ -249,6 +339,7 @@ func (c *Client) close() {
 		if session != nil && session.CleanSession {
 			c.broker.subscriptions.RemoveAll(c.clientID)
 			c.broker.sessions.Remove(c.clientID)
+			c.broker.offlineStore.RemoveAll(c.clientID)
 		}
 	}
 }

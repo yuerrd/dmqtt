@@ -30,6 +30,12 @@ type Config struct {
 
 	// Cluster configuration
 	Cluster ClusterConfig
+
+	// Log level: "debug", "info", "warn", "error" (default: "info")
+	LogLevel string
+
+	// HTTP API address for metrics and health (default: ":9090")
+	HTTPAddr string
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -81,5 +87,7 @@ func DefaultConfig() *Config {
 			VirtualNodes: 150,
 			ReplicaCount: 3,
 		},
+		LogLevel: "info",
+		HTTPAddr: ":9090",
 	}
 }

@@ -8,17 +8,21 @@ import (
 type State int
 
 const (
-	StateClosed   State = iota
+	StateClosed State = iota
 	StateOpen
 	StateHalfOpen
 )
 
 func (s State) String() string {
 	switch s {
-	case StateClosed: return "closed"
-	case StateOpen: return "open"
-	case StateHalfOpen: return "half-open"
-	default: return "unknown"
+	case StateClosed:
+		return "closed"
+	case StateOpen:
+		return "open"
+	case StateHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
 	}
 }
 
@@ -60,7 +64,8 @@ func (cb *CircuitBreaker) Allow() bool {
 	defer cb.mu.Unlock()
 
 	switch cb.state {
-	case StateClosed: return true
+	case StateClosed:
+		return true
 	case StateOpen:
 		if time.Since(cb.openedAt) > cb.config.OpenDuration {
 			cb.state = StateHalfOpen
@@ -68,8 +73,10 @@ func (cb *CircuitBreaker) Allow() bool {
 			return true
 		}
 		return false
-	case StateHalfOpen: return true
-	default: return false
+	case StateHalfOpen:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -80,7 +87,9 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.totalCount++
 	if cb.state == StateHalfOpen {
 		cb.halfOpenSucc++
-		if cb.halfOpenSucc >= cb.config.HalfOpenMax { cb.reset() }
+		if cb.halfOpenSucc >= cb.config.HalfOpenMax {
+			cb.reset()
+		}
 	}
 }
 
@@ -93,7 +102,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 	case StateClosed:
 		if cb.totalCount >= cb.config.MinRequests {
 			errorRate := float64(cb.failCount) / float64(cb.totalCount)
-			if errorRate >= cb.config.ErrorThreshold { cb.trip() }
+			if errorRate >= cb.config.ErrorThreshold {
+				cb.trip()
+			}
 		}
 	case StateHalfOpen:
 		cb.trip()

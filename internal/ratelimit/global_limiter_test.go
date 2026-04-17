@@ -17,9 +17,13 @@ func TestGlobalLimiter_RejectsOverBurst(t *testing.T) {
 	gl := NewGlobalLimiter(cfg)
 	rejected := 0
 	for i := 0; i < 20; i++ {
-		if err := gl.AllowIngress(); err != nil { rejected++ }
+		if err := gl.AllowIngress(); err != nil {
+			rejected++
+		}
 	}
-	if rejected == 0 { t.Fatal("expected some rejections when exceeding burst") }
+	if rejected == 0 {
+		t.Fatal("expected some rejections when exceeding burst")
+	}
 }
 
 func TestGlobalLimiter_ConnectRateLimit(t *testing.T) {
@@ -27,7 +31,11 @@ func TestGlobalLimiter_ConnectRateLimit(t *testing.T) {
 	gl := NewGlobalLimiter(cfg)
 	rejected := 0
 	for i := 0; i < 10; i++ {
-		if err := gl.AllowConnect(); err != nil { rejected++ }
+		if err := gl.AllowConnect(); err != nil {
+			rejected++
+		}
 	}
-	if rejected == 0 { t.Fatal("expected some connect rejections") }
+	if rejected == 0 {
+		t.Fatal("expected some connect rejections")
+	}
 }

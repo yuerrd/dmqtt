@@ -37,10 +37,10 @@ type RateLimiter interface {
 // NoopRateLimiter allows all operations. Used when rate limiting is disabled.
 type NoopRateLimiter struct{}
 
-func (n *NoopRateLimiter) AllowPublish(_, _ string, _ int) error        { return nil }
-func (n *NoopRateLimiter) AllowConnect(_ string) error                   { return nil }
-func (n *NoopRateLimiter) AllowSubscribe(_, _ string) error              { return nil }
-func (n *NoopRateLimiter) GetBackpressureLevel() BackpressureLevel       { return BPLevelNone }
+func (n *NoopRateLimiter) AllowPublish(_, _ string, _ int) error   { return nil }
+func (n *NoopRateLimiter) AllowConnect(_ string) error             { return nil }
+func (n *NoopRateLimiter) AllowSubscribe(_, _ string) error        { return nil }
+func (n *NoopRateLimiter) GetBackpressureLevel() BackpressureLevel { return BPLevelNone }
 
 // AggregateRateLimiter chains all rate limiting layers.
 type AggregateRateLimiter struct {

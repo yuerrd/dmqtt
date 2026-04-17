@@ -46,17 +46,27 @@ func (d *MaliciousDetector) RecordReconnect(clientID string) {
 }
 
 func (d *MaliciousDetector) Evaluate(clientID string) {
-	if !d.config.Enabled { return }
+	if !d.config.Enabled {
+		return
+	}
 	v, ok := d.stats.Load(clientID)
-	if !ok { return }
+	if !ok {
+		return
+	}
 	stats := v.(*clientStats)
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
 
 	score := 0.0
-	if float64(stats.messageCount) > d.config.HighRateThreshold { score += 50 }
-	if len(stats.topicSet) > d.config.ScanThreshold { score += 30 }
-	if int(stats.reconnects) > d.config.ReconnectThreshold { score += 20 }
+	if float64(stats.messageCount) > d.config.HighRateThreshold {
+		score += 50
+	}
+	if len(stats.topicSet) > d.config.ScanThreshold {
+		score += 30
+	}
+	if int(stats.reconnects) > d.config.ReconnectThreshold {
+		score += 20
+	}
 
 	stats.score = score
 	stats.lastEvaluated = time.Now()
@@ -67,7 +77,9 @@ func (d *MaliciousDetector) Evaluate(clientID string) {
 
 func (d *MaliciousDetector) Score(clientID string) float64 {
 	v, ok := d.stats.Load(clientID)
-	if !ok { return 0 }
+	if !ok {
+		return 0
+	}
 	stats := v.(*clientStats)
 	stats.mu.Lock()
 	defer stats.mu.Unlock()
@@ -75,7 +87,9 @@ func (d *MaliciousDetector) Score(clientID string) float64 {
 }
 
 func (d *MaliciousDetector) IsMalicious(clientID string) bool {
-	if !d.config.Enabled { return false }
+	if !d.config.Enabled {
+		return false
+	}
 	return d.Score(clientID) >= d.config.ScoreThreshold
 }
 
@@ -84,7 +98,9 @@ func (d *MaliciousDetector) Decay() {
 		stats := value.(*clientStats)
 		stats.mu.Lock()
 		stats.score /= 2
-		if stats.score < 1 { stats.score = 0 }
+		if stats.score < 1 {
+			stats.score = 0
+		}
 		stats.mu.Unlock()
 		return true
 	})
@@ -92,7 +108,9 @@ func (d *MaliciousDetector) Decay() {
 
 func (d *MaliciousDetector) getOrCreate(clientID string) *clientStats {
 	v, ok := d.stats.Load(clientID)
-	if ok { return v.(*clientStats) }
+	if ok {
+		return v.(*clientStats)
+	}
 	stats := &clientStats{topicSet: make(map[string]struct{}), windowStart: time.Now()}
 	actual, _ := d.stats.LoadOrStore(clientID, stats)
 	return actual.(*clientStats)

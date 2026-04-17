@@ -15,12 +15,16 @@ func NewGlobalLimiter(cfg *GlobalConfig) *GlobalLimiter {
 }
 
 func (gl *GlobalLimiter) AllowIngress() error {
-	if !gl.ingress.Allow() { return ErrGlobalIngressLimit }
+	if !gl.ingress.Allow() {
+		return ErrGlobalIngressLimit
+	}
 	return nil
 }
 
 func (gl *GlobalLimiter) AllowConnect() error {
-	if !gl.connect.Allow() { return ErrGlobalConnectLimit }
+	if !gl.connect.Allow() {
+		return ErrGlobalConnectLimit
+	}
 	return nil
 }
 

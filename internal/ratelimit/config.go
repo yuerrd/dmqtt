@@ -4,13 +4,13 @@ import "time"
 
 // Config holds all rate limiting configuration.
 type Config struct {
-	Enabled  bool
-	Global   GlobalConfig
-	Client   ClientConfig
-	Topic    TopicConfig
-	Backpressure BackpressureConfig
-	Adaptive     AdaptiveConfig
-	Detector     DetectorConfig
+	Enabled        bool
+	Global         GlobalConfig
+	Client         ClientConfig
+	Topic          TopicConfig
+	Backpressure   BackpressureConfig
+	Adaptive       AdaptiveConfig
+	Detector       DetectorConfig
 	MaxMessageSize int // bytes, default 262144 (256KB)
 }
 
@@ -25,9 +25,9 @@ func DefaultConfig() *Config {
 			ConnectBurst: 2000,
 		},
 		Client: ClientConfig{
-			MsgRate:      100,
-			MsgBurst:     200,
-			BlacklistTTL: 60 * time.Second,
+			MsgRate:         100,
+			MsgBurst:        200,
+			BlacklistTTL:    60 * time.Second,
 			CleanupInterval: 5 * time.Minute,
 		},
 		Topic: TopicConfig{
@@ -72,7 +72,7 @@ type GlobalConfig struct {
 }
 
 type ClientConfig struct {
-	MsgRate         float64       // msg/s per client
+	MsgRate         float64 // msg/s per client
 	MsgBurst        int
 	BlacklistTTL    time.Duration
 	CleanupInterval time.Duration

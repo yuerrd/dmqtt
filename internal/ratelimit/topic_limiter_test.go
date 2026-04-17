@@ -21,9 +21,13 @@ func TestTopicLimiter_ConfiguredTopicLimit(t *testing.T) {
 	tl := NewTopicLimiter(cfg)
 	rejected := 0
 	for i := 0; i < 20; i++ {
-		if err := tl.AllowPublish("alerts/fire"); err != nil { rejected++ }
+		if err := tl.AllowPublish("alerts/fire"); err != nil {
+			rejected++
+		}
 	}
-	if rejected == 0 { t.Fatal("expected rejections for configured topic") }
+	if rejected == 0 {
+		t.Fatal("expected rejections for configured topic")
+	}
 	if err := tl.AllowPublish("sensors/temp"); err != nil {
 		t.Fatalf("unconfigured topic should pass: %v", err)
 	}
@@ -34,15 +38,25 @@ func TestTopicLimiter_DefaultRate(t *testing.T) {
 	tl := NewTopicLimiter(cfg)
 	rejected := 0
 	for i := 0; i < 20; i++ {
-		if err := tl.AllowPublish("any/topic"); err != nil { rejected++ }
+		if err := tl.AllowPublish("any/topic"); err != nil {
+			rejected++
+		}
 	}
-	if rejected == 0 { t.Fatal("expected rejections with default rate") }
+	if rejected == 0 {
+		t.Fatal("expected rejections with default rate")
+	}
 }
 
 func TestTopicLimiter_HotspotDetection(t *testing.T) {
 	cfg := &TopicConfig{DefaultRate: 0, HotspotThreshold: 10, HotspotWindow: time.Second, TopicConfigs: make(map[string]TopicLimitEntry)}
 	tl := NewTopicLimiter(cfg)
-	for i := 0; i < 50; i++ { tl.RecordPublish("hot/topic") }
-	if !tl.IsHotspot("hot/topic") { t.Fatal("should detect hot/topic as hotspot") }
-	if tl.IsHotspot("cold/topic") { t.Fatal("cold/topic should not be a hotspot") }
+	for i := 0; i < 50; i++ {
+		tl.RecordPublish("hot/topic")
+	}
+	if !tl.IsHotspot("hot/topic") {
+		t.Fatal("should detect hot/topic as hotspot")
+	}
+	if tl.IsHotspot("cold/topic") {
+		t.Fatal("cold/topic should not be a hotspot")
+	}
 }

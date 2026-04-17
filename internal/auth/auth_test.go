@@ -447,3 +447,37 @@ func TestNoopAuth(t *testing.T) {
 		t.Error("NoopAuth should always authorize successfully")
 	}
 }
+
+func TestCredentialStore_ResolveTenant(t *testing.T) {
+	data := []byte(`{
+		"users": [
+			{"username": "dev1", "password_hash": "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "tenant_id": "acme", "acl": []},
+			{"username": "admin", "password_hash": "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "acl": []}
+		]
+	}`)
+	path := t.TempDir() + "/auth.json"
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadCredentials(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := store.ResolveTenant("dev1"); got != "acme" {
+		t.Errorf("expected acme, got %q", got)
+	}
+	if got := store.ResolveTenant("admin"); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+	if got := store.ResolveTenant("nonexistent"); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestNoopAuth_ResolveTenant(t *testing.T) {
+	noop := &NoopAuth{}
+	if got := noop.ResolveTenant("anyone"); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}

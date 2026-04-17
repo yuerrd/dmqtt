@@ -29,6 +29,7 @@ type ACLRule struct {
 type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"password_hash"`
+	TenantID     string    `json:"tenant_id"`
 	ACL          []ACLRule `json:"acl"`
 }
 
@@ -132,6 +133,25 @@ func (n *NoopAuth) Authenticate(username string, password []byte) bool {
 // Authorize always returns true for NoopAuth
 func (n *NoopAuth) Authorize(username string, topic string, action string) bool {
 	return true
+}
+
+// TenantResolver resolves a username to a tenant ID.
+type TenantResolver interface {
+	ResolveTenant(username string) string
+}
+
+// ResolveTenant returns the tenant ID for the given username.
+func (cs *CredentialStore) ResolveTenant(username string) string {
+	user, exists := cs.users[username]
+	if !exists {
+		return ""
+	}
+	return user.TenantID
+}
+
+// ResolveTenant always returns empty string (default tenant).
+func (n *NoopAuth) ResolveTenant(username string) string {
+	return ""
 }
 
 // topicMatch checks if a topic name matches a subscription filter.

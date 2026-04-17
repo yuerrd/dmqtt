@@ -86,3 +86,14 @@ type DisconnectEvent struct {
 type SessionExpiredEvent struct {
 	ClientID string
 }
+
+// UnsubscribeEvent is fired when a client unsubscribes from a topic filter.
+type UnsubscribeEvent struct {
+	ClientID    string
+	TopicFilter string // Mutable: interceptors may modify this (e.g., add prefix)
+}
+
+// OnUnsubscribeInterceptor is called when a client unsubscribes.
+type OnUnsubscribeInterceptor interface {
+	OnUnsubscribe(ctx context.Context, evt *UnsubscribeEvent) error
+}

@@ -354,6 +354,7 @@ func (c *Client) handleSubscribe(data []byte) {
 				continue
 			}
 			grantedQoS = evt.QoS
+			sub.TopicFilter = evt.TopicFilter // apply interceptor mutation
 		}
 
 		c.broker.subscriptions.Add(c.clientID, sub.TopicFilter, grantedQoS)
@@ -397,7 +398,19 @@ func (c *Client) handleUnsubscribe(data []byte) {
 	}
 
 	session := c.broker.sessions.Get(c.clientID)
-	for _, filter := range pkt.TopicFilters {
+	for i, filter := range pkt.TopicFilters {
+		if c.broker.interceptors != nil {
+			evt := &plugin.UnsubscribeEvent{
+				ClientID:    c.clientID,
+				TopicFilter: filter,
+			}
+			if err := c.broker.interceptors.OnUnsubscribe(context.Background(), evt); err != nil {
+				slog.Debug("unsubscribe rejected by interceptor", "client", c.clientID, "filter", filter, "error", err)
+				continue
+			}
+			pkt.TopicFilters[i] = evt.TopicFilter
+			filter = evt.TopicFilter
+		}
 		c.broker.subscriptions.Remove(c.clientID, filter)
 		if c.broker.cluster != nil {
 			c.broker.cluster.BroadcastUnsubscribe(filter)

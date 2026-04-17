@@ -175,6 +175,27 @@ func (c *InterceptorChain) OnDelivery(ctx context.Context, evt *DeliveryEvent) e
 	return nil
 }
 
+// OnUnsubscribe dispatches to interceptors implementing OnUnsubscribeInterceptor.
+func (c *InterceptorChain) OnUnsubscribe(ctx context.Context, evt *UnsubscribeEvent) error {
+	for _, ri := range c.interceptors {
+		hook, ok := ri.interceptor.(OnUnsubscribeInterceptor)
+		if !ok {
+			continue
+		}
+		err := ri.executor.Run(ctx, func(ctx context.Context) error {
+			return hook.OnUnsubscribe(ctx, evt)
+		})
+		if err == ErrInterceptorSkipped {
+			slog.Warn("interceptor skipped (breaker open)", "name", ri.interceptor.Name(), "hook", "OnUnsubscribe")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // OnDisconnect dispatches asynchronously to interceptors implementing OnDisconnectInterceptor.
 func (c *InterceptorChain) OnDisconnect(evt *DisconnectEvent) {
 	for _, ri := range c.interceptors {

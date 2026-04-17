@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/plugin"
 )
 
 func TestParseRules_Valid(t *testing.T) {
@@ -493,5 +496,54 @@ rules:
 
 	if webhookCalled.Load() != 1 {
 		t.Fatalf("expected 1 webhook call, got %d", webhookCalled.Load())
+	}
+}
+
+func TestRuleInterceptor_OnPublish(t *testing.T) {
+	var publishCount atomic.Int32
+	publishFn := func(topic string, payload []byte, qos byte) {
+		publishCount.Add(1)
+	}
+
+	engine, err := NewEngine(publishFn, EngineConfig{WorkerPoolSize: 4})
+	if err != nil {
+		t.Fatalf("create engine: %v", err)
+	}
+
+	rulesYAML := []byte(`
+rules:
+  - rule_id: test-intercept
+    enabled: true
+    source:
+      topic: "sensors/#"
+    filter: "payload.value > 50"
+    actions:
+      - type: publish
+        target_topic: "alerts/sensor"
+`)
+	if err := engine.LoadRulesFromBytes(rulesYAML); err != nil {
+		t.Fatalf("load rules: %v", err)
+	}
+
+	interceptor := NewRuleInterceptor(engine)
+	if interceptor.Name() != "rule-engine" {
+		t.Errorf("unexpected name: %s", interceptor.Name())
+	}
+
+	// OnPublish should never return error
+	evt := &plugin.PublishEvent{
+		ClientID: "test-client",
+		Topic:    "sensors/temp/1",
+		Payload:  []byte(`{"value": 75}`),
+		QoS:      0,
+	}
+	err = interceptor.OnPublish(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("OnPublish should never return error, got: %v", err)
+	}
+
+	interceptor.Close()
+	if publishCount.Load() != 1 {
+		t.Errorf("expected 1 publish action, got %d", publishCount.Load())
 	}
 }

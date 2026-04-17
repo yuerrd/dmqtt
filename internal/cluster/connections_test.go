@@ -130,3 +130,54 @@ func TestConnectionIndex_Concurrent(t *testing.T) {
 		t.Errorf("Count = %d, want 100", idx.Count())
 	}
 }
+
+func TestConnectionIndex_MigratingState(t *testing.T) {
+	idx := NewConnectionIndex()
+	idx.Add("dev-1", "node-1")
+
+	// Not migrating by default
+	if idx.IsMigrating("dev-1") {
+		t.Fatal("should not be migrating by default")
+	}
+
+	// Mark as migrating
+	idx.SetMigrating("dev-1", true)
+	if !idx.IsMigrating("dev-1") {
+		t.Fatal("should be migrating after SetMigrating(true)")
+	}
+
+	// Clear migrating
+	idx.SetMigrating("dev-1", false)
+	if idx.IsMigrating("dev-1") {
+		t.Fatal("should not be migrating after SetMigrating(false)")
+	}
+}
+
+func TestConnectionIndex_MigratingDevices(t *testing.T) {
+	idx := NewConnectionIndex()
+	idx.Add("dev-1", "node-1")
+	idx.Add("dev-2", "node-1")
+	idx.Add("dev-3", "node-2")
+
+	idx.SetMigrating("dev-1", true)
+	idx.SetMigrating("dev-3", true)
+
+	migrating := idx.MigratingDevices()
+	if len(migrating) != 2 {
+		t.Fatalf("expected 2 migrating devices, got %d", len(migrating))
+	}
+}
+
+func TestConnectionIndex_ClearMigrating(t *testing.T) {
+	idx := NewConnectionIndex()
+	idx.Add("dev-1", "node-1")
+	idx.Add("dev-2", "node-1")
+
+	idx.SetMigrating("dev-1", true)
+	idx.SetMigrating("dev-2", true)
+	idx.ClearAllMigrating()
+
+	if idx.IsMigrating("dev-1") || idx.IsMigrating("dev-2") {
+		t.Fatal("all migrating flags should be cleared")
+	}
+}

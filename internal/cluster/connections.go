@@ -4,16 +4,18 @@ import "sync"
 
 // ConnectionIndex tracks which devices are connected to which nodes.
 type ConnectionIndex struct {
-	mu      sync.RWMutex
-	devices map[string]string              // deviceID → nodeID
-	byNode  map[string]map[string]struct{} // nodeID → set of deviceIDs
+	mu        sync.RWMutex
+	devices   map[string]string              // deviceID → nodeID
+	byNode    map[string]map[string]struct{} // nodeID → set of deviceIDs
+	migrating map[string]bool                // deviceID → migrating flag
 }
 
 // NewConnectionIndex creates an empty ConnectionIndex.
 func NewConnectionIndex() *ConnectionIndex {
 	return &ConnectionIndex{
-		devices: make(map[string]string),
-		byNode:  make(map[string]map[string]struct{}),
+		devices:   make(map[string]string),
+		byNode:    make(map[string]map[string]struct{}),
+		migrating: make(map[string]bool),
 	}
 }
 
@@ -106,4 +108,40 @@ func (idx *ConnectionIndex) Count() int {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	return len(idx.devices)
+}
+
+// SetMigrating marks a device as migrating or clears the flag.
+func (idx *ConnectionIndex) SetMigrating(deviceID string, migrating bool) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if migrating {
+		idx.migrating[deviceID] = true
+	} else {
+		delete(idx.migrating, deviceID)
+	}
+}
+
+// IsMigrating returns true if the device is marked as migrating.
+func (idx *ConnectionIndex) IsMigrating(deviceID string) bool {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return idx.migrating[deviceID]
+}
+
+// MigratingDevices returns all device IDs currently marked as migrating.
+func (idx *ConnectionIndex) MigratingDevices() []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	result := make([]string, 0, len(idx.migrating))
+	for d := range idx.migrating {
+		result = append(result, d)
+	}
+	return result
+}
+
+// ClearAllMigrating removes all migrating flags.
+func (idx *ConnectionIndex) ClearAllMigrating() {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.migrating = make(map[string]bool)
 }

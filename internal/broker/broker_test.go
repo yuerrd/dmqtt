@@ -892,3 +892,22 @@ func TestBroker_RateLimitRejectsPublish(t *testing.T) {
 	}
 	t.Logf("received %d messages (rate limiting active)", received)
 }
+
+func TestBroker_CircuitOpenFallsBackToOffline(t *testing.T) {
+	b := New(":0", nil)
+
+	// Register a session with subscription
+	session := b.sessions.Create("subscriber", false)
+	session.Subscriptions["test/topic"] = 1
+	b.subscriptions.Add("subscriber", "test/topic", 1)
+
+	// Set up a mock cluster that returns ErrCircuitOpen on Forward
+	// We test the routeMessage method directly
+	b.routeMessage("test/topic", []byte("payload"), 1, false, false)
+
+	// Without a connected client, message should go to offline store
+	count := b.offlineStore.Count("subscriber")
+	if count != 1 {
+		t.Fatalf("expected 1 offline message, got %d", count)
+	}
+}

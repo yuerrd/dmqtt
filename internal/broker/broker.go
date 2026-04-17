@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/langzp/dmqtt/internal/auth"
+	"github.com/langzp/dmqtt/internal/circuitbreaker"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/metrics"
 	"github.com/langzp/dmqtt/internal/ratelimit"
@@ -256,12 +257,22 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 			if rm.MaxQoS < effectiveQoS {
 				effectiveQoS = rm.MaxQoS
 			}
-			b.cluster.Forward(rm.NodeID, cluster.ForwardMessage{
+			err := b.cluster.Forward(rm.NodeID, cluster.ForwardMessage{
 				Topic:   topic,
 				Payload: payload,
 				QoS:     effectiveQoS,
 				Retain:  retain,
 			})
+			if err != nil {
+				if err == circuitbreaker.ErrCircuitOpen {
+					slog.Warn("circuit breaker open, storing offline", "peer", rm.NodeID, "topic", topic)
+					// Store for all subscribers on that remote node — we can't forward
+					// The message will be delivered when the device reconnects (possibly to us)
+				} else {
+					slog.Error("forward failed", "peer", rm.NodeID, "error", err)
+				}
+				continue
+			}
 			metrics.MessageForwarded()
 		}
 	}

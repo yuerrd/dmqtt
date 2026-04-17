@@ -1,7 +1,13 @@
 package rule
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestParseRules_Valid(t *testing.T) {
@@ -220,5 +226,92 @@ func TestCompileRule_TopicAndQoSAccess(t *testing.T) {
 	}
 	if match {
 		t.Error("expected no match for wrong topic")
+	}
+}
+
+func TestActionExecutor_Publish(t *testing.T) {
+	var published atomic.Int32
+	var capturedTopic string
+	publishFn := func(topic string, payload []byte, qos byte) {
+		capturedTopic = topic
+		published.Add(1)
+	}
+	ae := NewActionExecutor(publishFn, ActionExecutorConfig{
+		WorkerPoolSize: 4,
+		WebhookTimeout: 1 * time.Second,
+	})
+
+	actions := []Action{{Type: "publish", TargetTopic: "alerts/temp"}}
+	ae.Execute("r1", "devices/1/data", []byte(`{"t":100}`), 0, "c1", actions)
+
+	ae.Close()
+	if published.Load() != 1 {
+		t.Fatalf("expected 1 publish, got %d", published.Load())
+	}
+	if capturedTopic != "alerts/temp" {
+		t.Errorf("expected topic alerts/temp, got %s", capturedTopic)
+	}
+}
+
+func TestActionExecutor_Webhook(t *testing.T) {
+	var received atomic.Int32
+	var receivedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Add(1)
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	ae := NewActionExecutor(nil, ActionExecutorConfig{
+		WorkerPoolSize: 4,
+		WebhookTimeout: 2 * time.Second,
+	})
+
+	actions := []Action{{Type: "webhook", WebhookURL: srv.URL}}
+	ae.Execute("r2", "test/topic", []byte(`{"val":42}`), 1, "client-1", actions)
+
+	ae.Close()
+	if received.Load() != 1 {
+		t.Fatalf("expected 1 webhook call, got %d", received.Load())
+	}
+
+	var wp webhookPayload
+	if err := json.Unmarshal(receivedBody, &wp); err != nil {
+		t.Fatalf("unmarshal webhook body: %v", err)
+	}
+	if wp.RuleID != "r2" {
+		t.Errorf("expected rule_id r2, got %s", wp.RuleID)
+	}
+	if wp.Topic != "test/topic" {
+		t.Errorf("expected topic test/topic, got %s", wp.Topic)
+	}
+	if wp.ClientID != "client-1" {
+		t.Errorf("expected client_id client-1, got %s", wp.ClientID)
+	}
+}
+
+func TestActionExecutor_PoolFull(t *testing.T) {
+	blocker := make(chan struct{})
+	var executed atomic.Int32
+	publishFn := func(topic string, payload []byte, qos byte) {
+		executed.Add(1)
+		<-blocker
+	}
+	ae := NewActionExecutor(publishFn, ActionExecutorConfig{
+		WorkerPoolSize: 1,
+		WebhookTimeout: 1 * time.Second,
+	})
+
+	ae.Execute("r1", "t", []byte(`{}`), 0, "c", []Action{{Type: "publish", TargetTopic: "out"}})
+	time.Sleep(50 * time.Millisecond)
+
+	ae.Execute("r2", "t", []byte(`{}`), 0, "c", []Action{{Type: "publish", TargetTopic: "out2"}})
+
+	close(blocker)
+	ae.Close()
+
+	if executed.Load() != 1 {
+		t.Errorf("expected 1 executed (second dropped), got %d", executed.Load())
 	}
 }

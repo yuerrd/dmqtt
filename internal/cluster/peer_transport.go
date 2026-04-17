@@ -18,8 +18,10 @@ import (
 type MessageType string
 
 const (
-	MsgForward    MessageType = "forward"
-	MsgForwardAck MessageType = "forward_ack"
+	MsgForward       MessageType = "forward"
+	MsgForwardAck    MessageType = "forward_ack"
+	MsgMigrateData   MessageType = "migrate_data"
+	MsgMigrateAck    MessageType = "migrate_ack"
 )
 
 // ForwardMessage is sent between nodes to forward a published message.
@@ -37,6 +39,35 @@ type ForwardMessage struct {
 type ForwardAckMessage struct {
 	Type MessageType `json:"type"`
 	ID   uint64      `json:"id"`
+}
+
+// MigrateOfflineMsg is a single offline message in migration data.
+type MigrateOfflineMsg struct {
+	Topic   string `json:"topic"`
+	Payload []byte `json:"payload"`
+	QoS     byte   `json:"qos"`
+}
+
+// MigrateSessionData is session state transferred during migration.
+type MigrateSessionData struct {
+	ClientID      string          `json:"client_id"`
+	CleanSession  bool            `json:"clean_session"`
+	Subscriptions map[string]byte `json:"subscriptions"`
+}
+
+// MigrateDataMessage transfers device data from source to target node.
+type MigrateDataMessage struct {
+	Type     MessageType         `json:"type"`
+	DeviceID string              `json:"device_id"`
+	Messages []MigrateOfflineMsg `json:"messages"`
+	Session  *MigrateSessionData `json:"session,omitempty"`
+}
+
+// MigrateAckMessage acknowledges receipt of migration data.
+type MigrateAckMessage struct {
+	Type     MessageType `json:"type"`
+	DeviceID string      `json:"device_id"`
+	Success  bool        `json:"success"`
 }
 
 // PeerTransport manages persistent TCP connections between cluster nodes.
@@ -57,6 +88,8 @@ type PeerTransport struct {
 
 	// cbConfig stores the circuit breaker configuration for new peers
 	cbConfig *circuitbreaker.Config
+
+	migrateHandler func(MigrateDataMessage)
 }
 
 type peerConn struct {
@@ -77,7 +110,7 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 	}
 
 	pt := &PeerTransport{
-		listenAddr: listenAddr,
+		listenAddr: ln.Addr().String(),
 		selfID:     selfID,
 		listener:   ln,
 		handler:    handler,
@@ -88,6 +121,11 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 
 	go pt.acceptLoop()
 	return pt, nil
+}
+
+// SetMigrateHandler sets the callback for incoming migration data.
+func (pt *PeerTransport) SetMigrateHandler(fn func(MigrateDataMessage)) {
+	pt.migrateHandler = fn
 }
 
 func (pt *PeerTransport) acceptLoop() {
@@ -128,16 +166,22 @@ func (pt *PeerTransport) handleConn(conn net.Conn) {
 			return
 		}
 
-		// Try to decode as ForwardMessage first
-		var msg ForwardMessage
-		if err := json.Unmarshal(data, &msg); err != nil {
-			slog.Error("peer transport unmarshal error", "error", err)
+		// Peek at message type
+		var peek struct {
+			Type MessageType `json:"type"`
+		}
+		if err := json.Unmarshal(data, &peek); err != nil {
+			slog.Error("peer transport unmarshal peek error", "error", err)
 			continue
 		}
 
-		switch msg.Type {
+		switch peek.Type {
 		case MsgForward:
-			// Auto-ACK for QoS > 0
+			var msg ForwardMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				slog.Error("peer transport unmarshal forward error", "error", err)
+				continue
+			}
 			if msg.QoS > 0 {
 				ack := ForwardAckMessage{Type: MsgForwardAck, ID: msg.ID}
 				ackData, _ := json.Marshal(ack)
@@ -155,6 +199,33 @@ func (pt *PeerTransport) handleConn(conn net.Conn) {
 				delete(pt.ackWaiters, ack.ID)
 			}
 			pt.ackMu.Unlock()
+		case MsgMigrateData:
+			var migrate MigrateDataMessage
+			if err := json.Unmarshal(data, &migrate); err != nil {
+				slog.Error("peer transport unmarshal migrate error", "error", err)
+				continue
+			}
+			ack := MigrateAckMessage{Type: MsgMigrateAck, DeviceID: migrate.DeviceID, Success: true}
+			ackData, _ := json.Marshal(ack)
+			writeFrame(conn, ackData)
+			if pt.migrateHandler != nil {
+				pt.migrateHandler(migrate)
+			}
+		case MsgMigrateAck:
+			var ack MigrateAckMessage
+			json.Unmarshal(data, &ack)
+			pt.ackMu.Lock()
+			key := uint64(0)
+			for _, b := range []byte(ack.DeviceID) {
+				key = key*31 + uint64(b)
+			}
+			if ch, ok := pt.ackWaiters[key]; ok {
+				close(ch)
+				delete(pt.ackWaiters, key)
+			}
+			pt.ackMu.Unlock()
+		default:
+			slog.Warn("peer transport: unknown message type", "type", peek.Type)
 		}
 	}
 }
@@ -342,6 +413,61 @@ func (pt *PeerTransport) SendReliable(nodeID string, msg ForwardMessage, maxRetr
 		}
 	}
 	return nil
+}
+
+// SendMigrate sends migration data to a peer and waits for ACK.
+func (pt *PeerTransport) SendMigrate(nodeID string, msg MigrateDataMessage) error {
+	msg.Type = MsgMigrateData
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal migrate message: %w", err)
+	}
+
+	pt.mu.RLock()
+	pc, ok := pt.peers[nodeID]
+	pt.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("peer %s not found", nodeID)
+	}
+
+	// Register ACK waiter using deviceID hash
+	key := uint64(0)
+	for _, b := range []byte(msg.DeviceID) {
+		key = key*31 + uint64(b)
+	}
+	ackCh := make(chan struct{})
+	pt.ackMu.Lock()
+	pt.ackWaiters[key] = ackCh
+	pt.ackMu.Unlock()
+
+	pc.mu.Lock()
+	if pc.conn == nil {
+		pc.mu.Unlock()
+		pt.ackMu.Lock()
+		delete(pt.ackWaiters, key)
+		pt.ackMu.Unlock()
+		return fmt.Errorf("peer %s not connected", nodeID)
+	}
+	err = writeFrame(pc.conn, data)
+	pc.mu.Unlock()
+	if err != nil {
+		pt.ackMu.Lock()
+		delete(pt.ackWaiters, key)
+		pt.ackMu.Unlock()
+		return fmt.Errorf("write migrate message: %w", err)
+	}
+
+	select {
+	case <-ackCh:
+		return nil
+	case <-time.After(10 * time.Second):
+		pt.ackMu.Lock()
+		delete(pt.ackWaiters, key)
+		pt.ackMu.Unlock()
+		return fmt.Errorf("migrate ACK timeout for device %s to %s", msg.DeviceID, nodeID)
+	case <-pt.done:
+		return fmt.Errorf("transport shutting down")
+	}
 }
 
 // Stop shuts down the transport, closing all connections.

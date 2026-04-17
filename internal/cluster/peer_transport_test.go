@@ -197,3 +197,60 @@ func TestPeerTransport_CircuitBreakerDefaultDisabled(t *testing.T) {
 		t.Fatal("should not get circuit open error when breaker is not configured")
 	}
 }
+
+func TestPeerTransport_MigrateMessages(t *testing.T) {
+	received := make(chan MigrateDataMessage, 1)
+
+	// Start receiver node
+	pt1, err := NewPeerTransport("127.0.0.1:0", "node-1", func(msg ForwardMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pt1.SetMigrateHandler(func(msg MigrateDataMessage) {
+		received <- msg
+	})
+	defer pt1.Stop()
+
+	// Start sender node
+	pt2, err := NewPeerTransport("127.0.0.1:0", "node-2", func(msg ForwardMessage) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pt2.Stop()
+
+	pt2.AddPeer("node-1", pt1.listenAddr)
+	time.Sleep(200 * time.Millisecond)
+
+	// Send migration data
+	migrateMsg := MigrateDataMessage{
+		Type:     MsgMigrateData,
+		DeviceID: "dev-1",
+		Messages: []MigrateOfflineMsg{
+			{Topic: "test/1", Payload: []byte("hello"), QoS: 1},
+		},
+		Session: &MigrateSessionData{
+			ClientID:      "dev-1",
+			CleanSession:  false,
+			Subscriptions: map[string]byte{"test/#": 1},
+		},
+	}
+	err = pt2.SendMigrate("node-1", migrateMsg)
+	if err != nil {
+		t.Fatalf("SendMigrate failed: %v", err)
+	}
+
+	select {
+	case msg := <-received:
+		if msg.DeviceID != "dev-1" {
+			t.Fatalf("expected dev-1, got %s", msg.DeviceID)
+		}
+		if len(msg.Messages) != 1 {
+			t.Fatalf("expected 1 message, got %d", len(msg.Messages))
+		}
+		if msg.Session == nil {
+			t.Fatal("expected session data")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for migrate message")
+	}
+}

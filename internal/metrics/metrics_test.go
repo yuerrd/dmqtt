@@ -132,3 +132,24 @@ func TestACLDenialMetric(t *testing.T) {
 		t.Error("expected subscribe denial counter >= 1")
 	}
 }
+
+func TestRateLimitRejected(t *testing.T) {
+	RateLimitRejected("client", "rate_exceeded")
+	RateLimitRejected("global", "ingress_exceeded")
+}
+
+func TestClientBlacklisted(t *testing.T) {
+	ClientBlacklisted()
+}
+
+func TestSetBackpressureLevel(t *testing.T) {
+	SetBackpressureLevel(3)
+}
+
+func TestSetCircuitBreakerState(t *testing.T) {
+	SetCircuitBreakerState("shard-1", 1)
+}
+
+func TestOfflineMessageEvicted(t *testing.T) {
+	OfflineMessageEvicted("low")
+}

@@ -57,6 +57,26 @@ var (
 		Name: "mqtt_acl_denials_total",
 		Help: "Total ACL authorization denials.",
 	}, []string{"action"})
+	rateLimitRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_rate_limit_rejected_total",
+		Help: "Total rate limit rejections.",
+	}, []string{"level", "reason"})
+	clientBlacklisted = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_client_blacklisted_total",
+		Help: "Total clients added to blacklist.",
+	})
+	backpressureLevel = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "dmqtt_backpressure_level",
+		Help: "Current backpressure level (0=none, 4=critical).",
+	})
+	circuitBreakerState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "dmqtt_circuit_breaker_state",
+		Help: "Circuit breaker state (0=closed, 1=open, 2=half-open).",
+	}, []string{"shard"})
+	offlineEvicted = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_offline_messages_evicted_total",
+		Help: "Total offline messages evicted by priority.",
+	}, []string{"priority"})
 )
 
 func init() {
@@ -73,6 +93,11 @@ func init() {
 		clusterNodes,
 		authAttempts,
 		aclDenials,
+		rateLimitRejected,
+		clientBlacklisted,
+		backpressureLevel,
+		circuitBreakerState,
+		offlineEvicted,
 	)
 }
 
@@ -104,6 +129,26 @@ func AuthAttempt(result string) {
 
 func ACLDenial(action string) {
 	aclDenials.WithLabelValues(action).Inc()
+}
+
+func RateLimitRejected(level, reason string) {
+	rateLimitRejected.WithLabelValues(level, reason).Inc()
+}
+
+func ClientBlacklisted() {
+	clientBlacklisted.Inc()
+}
+
+func SetBackpressureLevel(level int) {
+	backpressureLevel.Set(float64(level))
+}
+
+func SetCircuitBreakerState(shard string, state int) {
+	circuitBreakerState.WithLabelValues(shard).Set(float64(state))
+}
+
+func OfflineMessageEvicted(priority string) {
+	offlineEvicted.WithLabelValues(priority).Inc()
 }
 
 func SetSubscriptions(n int) {

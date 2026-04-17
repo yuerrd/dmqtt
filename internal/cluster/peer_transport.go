@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/circuitbreaker"
 )
 
 // MessageType identifies the type of inter-node message.
@@ -52,15 +54,19 @@ type PeerTransport struct {
 	// ackWaiters tracks pending ACK channels by message ID
 	ackMu      sync.Mutex
 	ackWaiters map[uint64]chan struct{}
+
+	// cbConfig stores the circuit breaker configuration for new peers
+	cbConfig *circuitbreaker.Config
 }
 
 type peerConn struct {
-	nodeID string
-	addr   string
-	conn   net.Conn
-	mu     sync.Mutex
-	closed bool
-	done   chan struct{}
+	nodeID  string
+	addr    string
+	conn    net.Conn
+	mu      sync.Mutex
+	closed  bool
+	done    chan struct{}
+	breaker *circuitbreaker.CircuitBreaker
 }
 
 // NewPeerTransport creates and starts a PeerTransport listening on the given address.
@@ -167,6 +173,9 @@ func (pt *PeerTransport) AddPeer(nodeID, addr string) {
 		addr:   addr,
 		done:   make(chan struct{}),
 	}
+	if pt.cbConfig != nil {
+		pc.breaker = circuitbreaker.New(*pt.cbConfig)
+	}
 	pt.peers[nodeID] = pc
 
 	go pt.connectPeer(pc)
@@ -251,6 +260,13 @@ func (pt *PeerTransport) Send(nodeID string, msg ForwardMessage) error {
 		return fmt.Errorf("peer %s not found", nodeID)
 	}
 
+	// Circuit breaker check
+	if pc.breaker != nil {
+		if err := pc.breaker.AllowOrError(); err != nil {
+			return err
+		}
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal forward message: %w", err)
@@ -260,15 +276,35 @@ func (pt *PeerTransport) Send(nodeID string, msg ForwardMessage) error {
 	defer pc.mu.Unlock()
 
 	if pc.conn == nil {
+		if pc.breaker != nil {
+			pc.breaker.RecordFailure()
+		}
 		return fmt.Errorf("peer %s not connected", nodeID)
 	}
 
-	return writeFrame(pc.conn, data)
+	err = writeFrame(pc.conn, data)
+	if pc.breaker != nil {
+		if err != nil {
+			pc.breaker.RecordFailure()
+		} else {
+			pc.breaker.RecordSuccess()
+		}
+	}
+	return err
 }
 
 // SendReliable sends a forward message and waits for an ACK.
 // Retries up to maxRetries times with the given timeout per attempt.
 func (pt *PeerTransport) SendReliable(nodeID string, msg ForwardMessage, maxRetries int, timeout time.Duration) error {
+	pt.mu.RLock()
+	pc, ok := pt.peers[nodeID]
+	pt.mu.RUnlock()
+	if ok && pc.breaker != nil {
+		if err := pc.breaker.AllowOrError(); err != nil {
+			return err
+		}
+	}
+
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		ackCh := make(chan struct{})
 		pt.ackMu.Lock()
@@ -280,6 +316,9 @@ func (pt *PeerTransport) SendReliable(nodeID string, msg ForwardMessage, maxRetr
 			pt.ackMu.Lock()
 			delete(pt.ackWaiters, msg.ID)
 			pt.ackMu.Unlock()
+			if err == circuitbreaker.ErrCircuitOpen {
+				return err
+			}
 			if attempt < maxRetries {
 				continue
 			}
@@ -326,6 +365,17 @@ func (pt *PeerTransport) Stop() error {
 	pt.mu.Unlock()
 
 	return nil
+}
+
+// SetCircuitBreakerConfig sets the circuit breaker config for all new peers.
+// Existing peers are updated with new breakers using the new config.
+func (pt *PeerTransport) SetCircuitBreakerConfig(cfg circuitbreaker.Config) {
+	pt.mu.Lock()
+	defer pt.mu.Unlock()
+	pt.cbConfig = &cfg
+	for _, pc := range pt.peers {
+		pc.breaker = circuitbreaker.New(cfg)
+	}
 }
 
 // --- Wire protocol: [4-byte big-endian length][JSON payload] ---

@@ -1,9 +1,12 @@
 package cluster
 
 import (
+	"net"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/circuitbreaker"
 )
 
 func TestPeerTransport_SendReceive(t *testing.T) {
@@ -122,5 +125,75 @@ func TestPeerTransport_StopClosesConnections(t *testing.T) {
 	err = pt.Stop()
 	if err != nil {
 		t.Fatalf("Stop: %v", err)
+	}
+}
+
+func TestPeerTransport_CircuitBreakerBlocksSend(t *testing.T) {
+	// Start a receiver that accepts but never reads (simulates unresponsive peer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close() // close immediately to cause send failures
+		}
+	}()
+
+	handler := func(msg ForwardMessage) {}
+	pt, err := NewPeerTransport("127.0.0.1:0", "self", handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pt.Stop()
+
+	// Configure a very aggressive breaker for testing
+	cbCfg := circuitbreaker.Config{
+		ErrorThreshold: 0.5,
+		WindowSize:     5 * time.Second,
+		OpenDuration:   10 * time.Second,
+		HalfOpenMax:    2,
+		MinRequests:    3,
+	}
+	pt.SetCircuitBreakerConfig(cbCfg)
+	pt.AddPeer("peer1", ln.Addr().String())
+
+	time.Sleep(100 * time.Millisecond) // let connection establish
+
+	// Send several messages — they should fail and trip the breaker
+	msg := ForwardMessage{Type: MsgForward, Topic: "test", Payload: []byte("hello")}
+	for i := 0; i < 5; i++ {
+		pt.Send("peer1", msg)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Next send should return ErrCircuitOpen
+	err = pt.Send("peer1", msg)
+	if err != circuitbreaker.ErrCircuitOpen {
+		t.Fatalf("expected ErrCircuitOpen, got %v", err)
+	}
+}
+
+func TestPeerTransport_CircuitBreakerDefaultDisabled(t *testing.T) {
+	handler := func(msg ForwardMessage) {}
+	pt, err := NewPeerTransport("127.0.0.1:0", "self", handler)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pt.Stop()
+
+	// Without SetCircuitBreakerConfig, breaker should not interfere
+	// Send to nonexistent peer should return "peer not found", not circuit open
+	err = pt.Send("nonexistent", ForwardMessage{})
+	if err == nil {
+		t.Fatal("expected error for nonexistent peer")
+	}
+	if err == circuitbreaker.ErrCircuitOpen {
+		t.Fatal("should not get circuit open error when breaker is not configured")
 	}
 }

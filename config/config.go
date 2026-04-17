@@ -138,10 +138,10 @@ type OfflineTierConfig struct {
 // MigrationConfig holds shard migration settings.
 type MigrationConfig struct {
 	MaxParallel     int  `json:"max_parallel"`      // Max concurrent migrations (default: 3)
-	BatchSize       int  `json:"batch_size"`         // Devices per batch (default: 1000)
-	BatchIntervalMs int  `json:"batch_interval_ms"`  // Milliseconds between batches (default: 1000)
-	MaxRetries      int  `json:"max_retries"`        // Data transfer retries (default: 3)
-	AutoRebalance   bool `json:"auto_rebalance"`     // Auto-migrate on ring changes (default: true)
+	BatchSize       int  `json:"batch_size"`        // Devices per batch (default: 1000)
+	BatchIntervalMs int  `json:"batch_interval_ms"` // Milliseconds between batches (default: 1000)
+	MaxRetries      int  `json:"max_retries"`       // Data transfer retries (default: 3)
+	AutoRebalance   bool `json:"auto_rebalance"`    // Auto-migrate on ring changes (default: true)
 }
 
 // DefaultConfig returns a Config with sensible defaults.

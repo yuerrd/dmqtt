@@ -18,10 +18,10 @@ import (
 type MessageType string
 
 const (
-	MsgForward       MessageType = "forward"
-	MsgForwardAck    MessageType = "forward_ack"
-	MsgMigrateData   MessageType = "migrate_data"
-	MsgMigrateAck    MessageType = "migrate_ack"
+	MsgForward     MessageType = "forward"
+	MsgForwardAck  MessageType = "forward_ack"
+	MsgMigrateData MessageType = "migrate_data"
+	MsgMigrateAck  MessageType = "migrate_ack"
 )
 
 // ForwardMessage is sent between nodes to forward a published message.

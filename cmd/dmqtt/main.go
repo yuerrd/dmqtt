@@ -18,6 +18,7 @@ import (
 	"github.com/langzp/dmqtt/internal/plugin"
 	"github.com/langzp/dmqtt/internal/plugin/audit"
 	"github.com/langzp/dmqtt/internal/ratelimit"
+	"github.com/langzp/dmqtt/internal/rule"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
@@ -78,6 +79,27 @@ func main() {
 		}, nil)
 		chain.Register(auditInterceptor, plugin.WithTimeout(50*time.Millisecond))
 		slog.Info("audit interceptor enabled", "bufferSize", cfg.Audit.BufferSize)
+	}
+	var ruleEngine *rule.Engine
+	if cfg.RuleEngine.Enabled {
+		var err error
+		ruleEngine, err = rule.NewEngine(b.RouteMessage, rule.EngineConfig{
+			WorkerPoolSize: cfg.RuleEngine.WorkerPoolSize,
+			WebhookTimeout: cfg.RuleEngine.WebhookTimeout,
+		})
+		if err != nil {
+			slog.Error("failed to create rule engine", "error", err)
+			os.Exit(1)
+		}
+		if cfg.RuleEngine.RulesFile != "" {
+			if err := ruleEngine.LoadRules(cfg.RuleEngine.RulesFile); err != nil {
+				slog.Error("failed to load rules", "error", err)
+				os.Exit(1)
+			}
+		}
+		ruleInterceptor := rule.NewRuleInterceptor(ruleEngine)
+		chain.Register(ruleInterceptor)
+		slog.Info("rule engine enabled", "rules_file", cfg.RuleEngine.RulesFile, "rules", ruleEngine.RuleCount())
 	}
 	if err := chain.InitAll(); err != nil {
 		slog.Error("failed to initialize interceptors", "error", err)
@@ -226,10 +248,26 @@ func main() {
 	}()
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	for sig := range sigCh {
+		if sig == syscall.SIGHUP {
+			if ruleEngine != nil && cfg.RuleEngine.RulesFile != "" {
+				slog.Info("SIGHUP received, reloading rules", "file", cfg.RuleEngine.RulesFile)
+				if err := ruleEngine.LoadRules(cfg.RuleEngine.RulesFile); err != nil {
+					slog.Error("failed to reload rules", "error", err)
+				} else {
+					slog.Info("rules reloaded", "rules", ruleEngine.RuleCount())
+				}
+			}
+			continue
+		}
+		break
+	}
 
 	fmt.Println("DMQTT shutting down...")
+	if ruleEngine != nil {
+		ruleEngine.Close()
+	}
 	b.Stop()
 	fmt.Println("DMQTT stopped")
 }

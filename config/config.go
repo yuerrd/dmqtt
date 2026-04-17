@@ -66,6 +66,9 @@ type Config struct {
 
 	// Audit interceptor configuration
 	Audit AuditConfig
+
+	// Rule engine configuration
+	RuleEngine RuleEngineConfig
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -154,6 +157,14 @@ type AuditConfig struct {
 	BackupPath string `json:"backup_path"`
 }
 
+// RuleEngineConfig holds rule engine settings.
+type RuleEngineConfig struct {
+	Enabled        bool          `json:"enabled"`
+	RulesFile      string        `json:"rules_file"`
+	WorkerPoolSize int           `json:"worker_pool_size"`
+	WebhookTimeout time.Duration `json:"webhook_timeout"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -217,6 +228,11 @@ func DefaultConfig() *Config {
 		Audit: AuditConfig{
 			Enabled:    false,
 			BufferSize: 4096,
+		},
+		RuleEngine: RuleEngineConfig{
+			Enabled:        false,
+			WorkerPoolSize: 64,
+			WebhookTimeout: 5 * time.Second,
 		},
 	}
 }

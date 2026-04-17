@@ -231,6 +231,12 @@ func (b *Broker) disconnectExisting(clientID string) {
 	}
 }
 
+// RouteMessage publishes a message into the broker's routing pipeline.
+// Used by rule engine publish actions to republish messages.
+func (b *Broker) RouteMessage(topic string, payload []byte, qos byte) {
+	b.routeMessage(topic, payload, qos, false, false)
+}
+
 func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain bool, forwarded bool) {
 	matches := b.subscriptions.Match(topic)
 

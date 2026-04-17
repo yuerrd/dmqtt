@@ -53,6 +53,12 @@ type Cluster struct {
 	localDevicesProvider func() []string
 	onRemoteConnect      func(deviceID, nodeID string)
 
+	coordinator     *MigrationCoordinator
+	executor        *MigrationExecutor
+	brokerAPI       MigrationBrokerAPI
+	autoRebalance   bool
+	migrationConfig MigrationConfig
+
 	done chan struct{}
 }
 
@@ -141,6 +147,12 @@ func (c *Cluster) eventLoop() {
 	for {
 		select {
 		case ev := <-c.membership.Events():
+			// Snapshot ring before update for diff calculation
+			var oldRing *Ring
+			if c.autoRebalance && c.coordinator != nil {
+				oldRing = c.ring.Snapshot()
+			}
+
 			switch ev.Type {
 			case NodeJoin:
 				slog.Info("cluster: node joined", "node", ev.Node.ID)
@@ -162,10 +174,101 @@ func (c *Cluster) eventLoop() {
 				slog.Info("cluster: node updated", "node", ev.Node.ID)
 			}
 			c.ring.Update(c.membership.Members())
+
+			// Auto-rebalance: compute diff and create migrations
+			if oldRing != nil && c.localDevicesProvider != nil {
+				go c.autoRebalanceAfterRingChange(oldRing)
+			}
 		case <-c.done:
 			return
 		}
 	}
+}
+
+func (c *Cluster) autoRebalanceAfterRingChange(oldRing *Ring) {
+	localDevices := c.localDevicesProvider()
+	if len(localDevices) == 0 {
+		return
+	}
+
+	diff := DiffOwnership(oldRing, c.ring, localDevices)
+	myDiff, ok := diff[c.self.ID]
+	if !ok {
+		return
+	}
+
+	for toNode, deviceIDs := range myDiff {
+		if !c.coordinator.CanStartMore() {
+			slog.Warn("auto-rebalance: max parallel migrations reached, skipping", "to", toNode, "devices", len(deviceIDs))
+			continue
+		}
+
+		cfg := c.migrationConfig
+		if cfg.BatchSize == 0 {
+			cfg = DefaultMigrationConfig()
+		}
+
+		id := fmt.Sprintf("auto-%s-%s-%d", c.self.ID, toNode, time.Now().UnixMilli())
+		m := NewShardMigration(id, c.self.ID, toNode, deviceIDs, cfg)
+		c.coordinator.Submit(m)
+
+		go func(migration *ShardMigration) {
+			if err := c.executor.Execute(migration); err != nil {
+				slog.Error("auto-rebalance migration failed", "id", migration.ID, "error", err)
+			}
+		}(m)
+
+		slog.Info("auto-rebalance: migration created", "id", id, "to", toNode, "devices", len(deviceIDs))
+	}
+}
+
+// SetMigrationBrokerAPI sets the broker API for migrations.
+func (c *Cluster) SetMigrationBrokerAPI(api MigrationBrokerAPI) {
+	c.brokerAPI = api
+	c.coordinator = NewMigrationCoordinator(3)
+	c.executor = NewMigrationExecutor(c.transport, c.connections, api)
+}
+
+// SetAutoRebalance enables/disables automatic migration on ring changes.
+func (c *Cluster) SetAutoRebalance(enabled bool) {
+	c.autoRebalance = enabled
+}
+
+// SetMigrationConfig sets the default config for auto-triggered migrations.
+func (c *Cluster) SetMigrationConfig(cfg MigrationConfig) {
+	c.migrationConfig = cfg
+}
+
+// Coordinator returns the migration coordinator.
+func (c *Cluster) Coordinator() *MigrationCoordinator {
+	return c.coordinator
+}
+
+// TriggerMigration manually creates and executes a migration.
+func (c *Cluster) TriggerMigration(toNode string, deviceIDs []string) (*ShardMigration, error) {
+	if c.coordinator == nil {
+		return nil, fmt.Errorf("migration not configured: call SetMigrationBrokerAPI first")
+	}
+	if !c.coordinator.CanStartMore() {
+		return nil, fmt.Errorf("max parallel migrations reached")
+	}
+
+	cfg := c.migrationConfig
+	if cfg.BatchSize == 0 {
+		cfg = DefaultMigrationConfig()
+	}
+
+	id := fmt.Sprintf("mig-%s-%s-%d", c.self.ID, toNode, time.Now().UnixMilli())
+	m := NewShardMigration(id, c.self.ID, toNode, deviceIDs, cfg)
+	c.coordinator.Submit(m)
+
+	go func() {
+		if err := c.executor.Execute(m); err != nil {
+			slog.Error("migration failed", "id", m.ID, "error", err)
+		}
+	}()
+
+	return m, nil
 }
 
 // Stop gracefully leaves the cluster and shuts down.

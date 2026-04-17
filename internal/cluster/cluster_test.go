@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -166,4 +167,41 @@ func TestCluster_LocateDeviceN_Replicas(t *testing.T) {
 		}
 		seen[r.ID] = true
 	}
+}
+
+func TestCluster_AutoRebalanceCreatesNigrations(t *testing.T) {
+oldNodes := []NodeInfo{
+{ID: "node-1", Host: "10.0.0.1", GossipPort: 7000},
+{ID: "node-2", Host: "10.0.0.2", GossipPort: 7000},
+}
+newNodes := []NodeInfo{
+{ID: "node-1", Host: "10.0.0.1", GossipPort: 7000},
+{ID: "node-2", Host: "10.0.0.2", GossipPort: 7000},
+{ID: "node-3", Host: "10.0.0.3", GossipPort: 7000},
+}
+
+oldRing := NewRing(10)
+oldRing.Update(oldNodes)
+newRing := NewRing(10)
+newRing.Update(newNodes)
+
+var devices []string
+for i := 0; i < 50; i++ {
+devices = append(devices, fmt.Sprintf("dev-%d", i))
+}
+
+diff := DiffOwnership(oldRing, newRing, devices)
+
+totalMoved := 0
+for _, targets := range diff {
+for _, devs := range targets {
+totalMoved += len(devs)
+}
+}
+if totalMoved == 0 {
+t.Fatal("expected some devices to move")
+}
+if totalMoved > len(devices) {
+t.Fatalf("moved %d devices but only %d exist", totalMoved, len(devices))
+}
 }

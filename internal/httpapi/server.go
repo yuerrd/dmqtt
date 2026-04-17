@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -18,9 +20,10 @@ type ReadinessChecker interface {
 
 // Server serves HTTP endpoints for observability.
 type Server struct {
-	httpServer *http.Server
-	checker    ReadinessChecker
-	listener   net.Listener
+	httpServer  *http.Server
+	checker     ReadinessChecker
+	listener    net.Listener
+	coordinator *cluster.MigrationCoordinator
 }
 
 // New creates a new HTTP API server.
@@ -31,6 +34,8 @@ func New(addr string, checker ReadinessChecker) *Server {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
+	mux.HandleFunc("/api/v1/cluster/migrations", s.handleMigrations)
+	mux.HandleFunc("/api/v1/cluster/migrations/", s.handleMigrationByID)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -88,4 +93,66 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{"status": "not_ready"})
 	}
+}
+
+// SetMigrationCoordinator sets the migration coordinator for API endpoints.
+func (s *Server) SetMigrationCoordinator(coord *cluster.MigrationCoordinator) {
+	s.coordinator = coord
+}
+
+func (s *Server) handleMigrations(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.coordinator == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "migrations not configured"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		migrations := s.coordinator.List()
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(migrations)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleMigrationByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.coordinator == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "migrations not configured"})
+		return
+	}
+
+	// Parse ID from path: /api/v1/cluster/migrations/{id}[/cancel]
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/cluster/migrations/")
+	parts := strings.Split(path, "/")
+	id := parts[0]
+
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+		if s.coordinator.Cancel(id) {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "migration not found"})
+		}
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		m := s.coordinator.Get(id)
+		if m == nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "migration not found"})
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(m)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }

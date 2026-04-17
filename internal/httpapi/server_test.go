@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/cluster"
 )
 
 type mockChecker struct {
@@ -149,5 +151,72 @@ func TestMetricsEndpoint(t *testing.T) {
 
 	if ct := resp.Header.Get("Content-Type"); ct == "" {
 		t.Error("Content-Type header missing")
+	}
+}
+
+func TestMigrationAPI_ListEmpty(t *testing.T) {
+	coord := cluster.NewMigrationCoordinator(3)
+	srv := New(":0", nil)
+	srv.SetMigrationCoordinator(coord)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result []interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if len(result) != 0 {
+		t.Fatalf("expected empty list, got %d", len(result))
+	}
+}
+
+func TestMigrationAPI_GetNotFound(t *testing.T) {
+	coord := cluster.NewMigrationCoordinator(3)
+	srv := New(":0", nil)
+	srv.SetMigrationCoordinator(coord)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/migrations/nonexistent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestMigrationAPI_CancelNotFound(t *testing.T) {
+	coord := cluster.NewMigrationCoordinator(3)
+	srv := New(":0", nil)
+	srv.SetMigrationCoordinator(coord)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("POST", "http://"+srv.Addr()+"/api/v1/cluster/migrations/nonexistent/cancel", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }

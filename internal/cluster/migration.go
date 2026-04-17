@@ -160,3 +160,94 @@ func (m *ShardMigration) IsTerminal() bool {
 	defer m.mu.Unlock()
 	return m.Status == MigrationCompleted || m.Status == MigrationFailed || m.Status == MigrationCancelled
 }
+
+// MigrationCoordinator manages concurrent shard migrations.
+type MigrationCoordinator struct {
+	mu          sync.Mutex
+	migrations  map[string]*ShardMigration
+	maxParallel int
+}
+
+// NewMigrationCoordinator creates a coordinator with the given max parallel migrations.
+func NewMigrationCoordinator(maxParallel int) *MigrationCoordinator {
+	if maxParallel <= 0 {
+		maxParallel = 3
+	}
+	return &MigrationCoordinator{
+		migrations:  make(map[string]*ShardMigration),
+		maxParallel: maxParallel,
+	}
+}
+
+// Submit adds a migration to the coordinator.
+func (mc *MigrationCoordinator) Submit(m *ShardMigration) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.migrations[m.ID] = m
+}
+
+// Get returns a migration by ID, or nil if not found.
+func (mc *MigrationCoordinator) Get(id string) *ShardMigration {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return mc.migrations[id]
+}
+
+// List returns all tracked migrations.
+func (mc *MigrationCoordinator) List() []*ShardMigration {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	result := make([]*ShardMigration, 0, len(mc.migrations))
+	for _, m := range mc.migrations {
+		result = append(result, m)
+	}
+	return result
+}
+
+// Cancel cancels a migration by ID. Returns true if found.
+func (mc *MigrationCoordinator) Cancel(id string) bool {
+	mc.mu.Lock()
+	m, ok := mc.migrations[id]
+	mc.mu.Unlock()
+	if !ok {
+		return false
+	}
+	m.Cancel()
+	return true
+}
+
+// Count returns total tracked migrations.
+func (mc *MigrationCoordinator) Count() int {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	return len(mc.migrations)
+}
+
+// ActiveCount returns the number of running migrations.
+func (mc *MigrationCoordinator) ActiveCount() int {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	count := 0
+	for _, m := range mc.migrations {
+		if m.Status == MigrationRunning {
+			count++
+		}
+	}
+	return count
+}
+
+// CanStartMore returns true if more migrations can be started.
+func (mc *MigrationCoordinator) CanStartMore() bool {
+	return mc.ActiveCount() < mc.maxParallel
+}
+
+// CleanupTerminal removes all completed/failed/cancelled migrations.
+func (mc *MigrationCoordinator) CleanupTerminal() {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	for id, m := range mc.migrations {
+		if m.IsTerminal() {
+			delete(mc.migrations, id)
+		}
+	}
+}

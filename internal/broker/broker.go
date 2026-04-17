@@ -9,6 +9,7 @@ import (
 	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
@@ -26,6 +27,7 @@ type Broker struct {
 	cluster       *cluster.Cluster
 	authenticator auth.Authenticator
 	authorizer    auth.Authorizer
+	rateLimiter   ratelimit.RateLimiter
 
 	inflightLimit int
 
@@ -47,6 +49,7 @@ func New(addr string, store storage.Store) *Broker {
 		store:         store,
 		authenticator: noop,
 		authorizer:    noop,
+		rateLimiter:   &ratelimit.NoopRateLimiter{},
 		inflightLimit: 20,
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
@@ -108,6 +111,12 @@ func (b *Broker) acceptLoop(l transport.Listener) {
 				slog.Error("accept error", "error", err)
 				continue
 			}
+		}
+		if err := b.rateLimiter.AllowConnect(""); err != nil {
+			slog.Warn("connection rate limited", "error", err)
+			metrics.RateLimitRejected("connect", err.Error())
+			conn.Close()
+			continue
 		}
 		c := newClient(conn, b)
 		go c.serve()
@@ -174,6 +183,11 @@ func (b *Broker) SetCluster(c *cluster.Cluster) {
 func (b *Broker) SetAuth(authn auth.Authenticator, authz auth.Authorizer) {
 	b.authenticator = authn
 	b.authorizer = authz
+}
+
+// SetRateLimiter sets the rate limiter. Must be called before Start().
+func (b *Broker) SetRateLimiter(rl ratelimit.RateLimiter) {
+	b.rateLimiter = rl
 }
 
 // Cluster returns the attached cluster, or nil if standalone.

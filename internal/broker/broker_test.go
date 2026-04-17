@@ -13,6 +13,7 @@ import (
 
 	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/codec"
+	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 )
 
@@ -838,4 +839,56 @@ func TestKeepAliveTimeout_TriggersWill(t *testing.T) {
 	if pkt.Topic != "will/topic" || string(pkt.Payload) != "I died" {
 		t.Fatalf("unexpected will: topic=%s payload=%s", pkt.Topic, string(pkt.Payload))
 	}
+}
+
+func TestBroker_RateLimitRejectsPublish(t *testing.T) {
+	b := New(":0", nil)
+	
+	// Set up rate limiter that allows 1 msg then rejects
+	cfg := ratelimit.DefaultConfig()
+	cfg.Enabled = true
+	cfg.Client.MsgRate = 1
+	cfg.Client.MsgBurst = 1
+	rl := ratelimit.NewAggregateRateLimiter(cfg)
+	b.SetRateLimiter(rl)
+	
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	// Subscribe
+	sub := dial(t, b.Addr())
+	defer sub.Close()
+	mqttConnect(t, sub, "sub-client", true)
+	mqttSubscribe(t, sub, 1, "test/topic", 0)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publisher
+	pub := dial(t, b.Addr())
+	defer pub.Close()
+	mqttConnect(t, pub, "pub-client", true)
+
+	// First publish should succeed (burst=1)
+	mqttPublishQoS0(t, pub, "test/topic", []byte("msg1"))
+	time.Sleep(100 * time.Millisecond)
+
+	// Rapid publishes should be rate limited
+	for i := 0; i < 10; i++ {
+		mqttPublishQoS0(t, pub, "test/topic", []byte("flood"))
+	}
+
+	// Subscriber should receive msg1 but not all flood messages
+	sub.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	received := 0
+	for {
+		_, _, err := codec.ReadPacket(sub)
+		if err != nil {
+			break
+		}
+		received++
+	}
+	if received >= 11 {
+		t.Fatalf("rate limiter should have dropped some messages, received %d", received)
+	}
+	t.Logf("received %d messages (rate limiting active)", received)
 }

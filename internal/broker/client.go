@@ -199,6 +199,12 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		return
 	}
 
+	if err := c.broker.rateLimiter.AllowPublish(c.clientID, pkt.Topic, len(pkt.Payload)); err != nil {
+		slog.Debug("publish rate limited", "client", c.clientID, "topic", pkt.Topic, "reason", err)
+		metrics.RateLimitRejected("client", err.Error())
+		return
+	}
+
 	metrics.MessagePublished(fh.QoS)
 
 	if fh.Retain {
@@ -288,6 +294,13 @@ func (c *Client) handleSubscribe(data []byte) {
 
 		if !c.broker.authorizer.Authorize(c.username, sub.TopicFilter, "subscribe") {
 			metrics.ACLDenial("subscribe")
+			returnCodes[i] = 0x80
+			continue
+		}
+
+		if err := c.broker.rateLimiter.AllowSubscribe(c.clientID, sub.TopicFilter); err != nil {
+			slog.Debug("subscribe rate limited", "client", c.clientID, "filter", sub.TopicFilter, "reason", err)
+			metrics.RateLimitRejected("subscribe", err.Error())
 			returnCodes[i] = 0x80
 			continue
 		}

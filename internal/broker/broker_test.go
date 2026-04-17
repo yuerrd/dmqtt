@@ -2,6 +2,8 @@ package broker
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"github.com/langzp/dmqtt/internal/auth"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/codec"
+	"github.com/langzp/dmqtt/internal/plugin"
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 )
@@ -992,5 +995,118 @@ t.Fatal("session should be created")
 }
 if session.Subscriptions["imported/#"] != 1 {
 t.Fatal("subscription should be imported")
+}
+}
+
+// --- Interceptor test types ---
+
+type testRejectPublishInterceptor struct{}
+
+func (t *testRejectPublishInterceptor) Name() string  { return "reject-publish" }
+func (t *testRejectPublishInterceptor) Init() error   { return nil }
+func (t *testRejectPublishInterceptor) Close() error  { return nil }
+func (t *testRejectPublishInterceptor) OnPublish(ctx context.Context, evt *plugin.PublishEvent) error {
+return fmt.Errorf("publish rejected")
+}
+
+type testRejectConnectInterceptor struct {
+blockedClient string
+}
+
+func (t *testRejectConnectInterceptor) Name() string  { return "reject-connect" }
+func (t *testRejectConnectInterceptor) Init() error   { return nil }
+func (t *testRejectConnectInterceptor) Close() error  { return nil }
+func (t *testRejectConnectInterceptor) OnConnect(ctx context.Context, evt *plugin.ConnectEvent) error {
+if evt.ClientID == t.blockedClient {
+return fmt.Errorf("client %s is blocked", evt.ClientID)
+}
+return nil
+}
+
+// --- Interceptor integration tests ---
+
+func TestInterceptor_OnPublishReject(t *testing.T) {
+b := New(":0", nil)
+
+chain := plugin.NewInterceptorChain()
+chain.Register(&testRejectPublishInterceptor{})
+chain.InitAll()
+defer chain.CloseAll()
+b.SetInterceptors(chain)
+
+go b.Start()
+defer b.Stop()
+waitForBroker(t, b)
+
+// Subscribe
+sub := dial(t, b.Addr())
+defer sub.Close()
+mqttConnect(t, sub, "sub-1", true)
+mqttSubscribe(t, sub, 1, "test/topic", 0)
+time.Sleep(50 * time.Millisecond)
+
+// Publish — should be rejected by interceptor
+pub := dial(t, b.Addr())
+defer pub.Close()
+mqttConnect(t, pub, "pub-1", true)
+mqttPublishQoS0(t, pub, "test/topic", []byte("hello"))
+
+time.Sleep(200 * time.Millisecond)
+
+// Subscriber should NOT receive the message
+sub.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+buf := make([]byte, 256)
+_, err := sub.Read(buf)
+if err == nil {
+t.Fatal("expected no message (publish should have been rejected)")
+}
+}
+
+func TestInterceptor_OnConnectReject(t *testing.T) {
+b := New(":0", nil)
+
+chain := plugin.NewInterceptorChain()
+chain.Register(&testRejectConnectInterceptor{blockedClient: "blocked-client"})
+chain.InitAll()
+defer chain.CloseAll()
+b.SetInterceptors(chain)
+
+go b.Start()
+defer b.Stop()
+waitForBroker(t, b)
+
+// Try to connect with blocked client ID
+conn := dial(t, b.Addr())
+defer conn.Close()
+
+// Send CONNECT manually
+var payload bytes.Buffer
+writeUTF8(&payload, "MQTT")
+payload.WriteByte(0x04)      // protocol level
+payload.WriteByte(0x02)      // flags: clean session
+payload.Write([]byte{0, 60}) // keep alive
+writeUTF8(&payload, "blocked-client")
+
+fh := codec.FixedHeader{
+PacketType:      codec.CONNECT,
+RemainingLength: payload.Len(),
+}
+conn.Write(fh.Encode())
+conn.Write(payload.Bytes())
+
+// Read CONNACK — should be refused
+conn.SetReadDeadline(time.Now().Add(time.Second))
+respFH, data, err := codec.ReadPacket(conn)
+if err != nil {
+t.Fatal(err)
+}
+if respFH.PacketType != codec.CONNACK {
+t.Fatalf("expected CONNACK, got %s", codec.PacketTypeName(respFH.PacketType))
+}
+if len(data) < 2 {
+t.Fatal("CONNACK too short")
+}
+if data[1] == codec.ConnackAccepted {
+t.Fatal("expected connection to be rejected")
 }
 }

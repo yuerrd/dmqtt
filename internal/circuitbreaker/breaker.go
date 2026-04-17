@@ -1,6 +1,7 @@
 package circuitbreaker
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -42,6 +43,17 @@ func DefaultConfig() Config {
 		HalfOpenMax:    5,
 		MinRequests:    10,
 	}
+}
+
+// ErrCircuitOpen is returned when the circuit breaker is open and rejecting requests.
+var ErrCircuitOpen = errors.New("circuit breaker is open")
+
+// AllowOrError returns nil if the request is allowed, or ErrCircuitOpen if the breaker is open.
+func (cb *CircuitBreaker) AllowOrError() error {
+	if cb.Allow() {
+		return nil
+	}
+	return ErrCircuitOpen
 }
 
 type CircuitBreaker struct {

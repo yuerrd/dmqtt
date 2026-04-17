@@ -137,3 +137,37 @@ func TestCircuitBreaker_Reset(t *testing.T) {
 		t.Fatal("should allow after reset")
 	}
 }
+
+func TestErrCircuitOpen(t *testing.T) {
+	if ErrCircuitOpen == nil {
+		t.Fatal("ErrCircuitOpen should not be nil")
+	}
+	if ErrCircuitOpen.Error() != "circuit breaker is open" {
+		t.Fatalf("unexpected error message: %s", ErrCircuitOpen.Error())
+	}
+}
+
+func TestCircuitBreaker_AllowOrError(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.ErrorThreshold = 0.5
+	cfg.MinRequests = 3
+	cfg.OpenDuration = 100 * time.Millisecond
+	cb := New(cfg)
+
+	// Closed state — should return nil
+	if err := cb.AllowOrError(); err != nil {
+		t.Fatalf("expected nil in Closed state, got %v", err)
+	}
+
+	// Trip the breaker
+	for i := 0; i < 5; i++ {
+		cb.Allow()
+		cb.RecordFailure()
+	}
+
+	// Open state — should return ErrCircuitOpen
+	err := cb.AllowOrError()
+	if err != ErrCircuitOpen {
+		t.Fatalf("expected ErrCircuitOpen in Open state, got %v", err)
+	}
+}

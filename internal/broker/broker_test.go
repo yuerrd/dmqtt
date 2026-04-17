@@ -20,6 +20,7 @@ import (
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/rule"
 	"github.com/langzp/dmqtt/internal/storage"
+	"github.com/langzp/dmqtt/internal/tenant"
 )
 
 func mqttConnect(t *testing.T, conn net.Conn, clientID string, cleanSession bool) {
@@ -1188,5 +1189,88 @@ rules:
 	_, err = sub.Read(buf)
 	if err == nil {
 		t.Fatal("expected no message for temp=30")
+	}
+}
+
+func TestTenant_TopicIsolation(t *testing.T) {
+	// Create auth with tenant users
+	hash, _ := bcrypt.GenerateFromPassword([]byte("testpass"), bcrypt.MinCost)
+	authJSON := `{"users":[
+		{"username":"pub_user","password_hash":"` + string(hash) + `","tenant_id":"acme","acl":[
+			{"topic":"#","access":"publish"},
+			{"topic":"#","access":"subscribe"}
+		]},
+		{"username":"sub_user","password_hash":"` + string(hash) + `","tenant_id":"acme","acl":[
+			{"topic":"#","access":"publish"},
+			{"topic":"#","access":"subscribe"}
+		]}
+	]}`
+
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	os.WriteFile(authPath, []byte(authJSON), 0644)
+	store, err := auth.LoadCredentials(authPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up tenant manager
+	tm := tenant.NewManager()
+	err = tm.LoadTenantsFromBytes([]byte(`
+tenants:
+  - tenant_id: acme
+    max_connections: 10
+    max_message_rate: 1000
+    max_message_size: 65536
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire broker with auth + tenant interceptor (first in chain)
+	b := New(":0", nil)
+	b.SetAuth(store, store)
+
+	chain := plugin.NewInterceptorChain()
+	ti := tenant.NewInterceptor(tm, store)
+	chain.Register(ti)
+	chain.InitAll()
+	b.SetInterceptors(chain)
+	defer chain.CloseAll()
+
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	// Connect subscriber
+	subConn := dial(t, b.Addr())
+	defer subConn.Close()
+	_, data := mqttConnectWithAuth(t, subConn, "sub-tenant", "sub_user", "testpass", true)
+	if len(data) < 2 || data[1] != codec.ConnackAccepted {
+		t.Fatalf("subscriber CONNACK failed: %v", data)
+	}
+
+	// Subscribe to "sensors/#" — interceptor should rewrite to "acme/sensors/#"
+	mqttSubscribe(t, subConn, 1, "sensors/#", 0)
+	time.Sleep(50 * time.Millisecond)
+
+	// Connect publisher
+	pubConn := dial(t, b.Addr())
+	defer pubConn.Close()
+	_, data = mqttConnectWithAuth(t, pubConn, "pub-tenant", "pub_user", "testpass", true)
+	if len(data) < 2 || data[1] != codec.ConnackAccepted {
+		t.Fatalf("publisher CONNACK failed: %v", data)
+	}
+
+	// Publish to "sensors/temp" — interceptor should rewrite to "acme/sensors/temp"
+	mqttPublishQoS0(t, pubConn, "sensors/temp", []byte("25.5"))
+
+	// Subscriber should receive PUBLISH with original topic "sensors/temp" (prefix stripped)
+	pkt := mqttReadPublish(t, subConn, 2*time.Second)
+	if pkt.Topic != "sensors/temp" {
+		t.Errorf("expected unprefixed topic 'sensors/temp', got %q", pkt.Topic)
+	}
+	if string(pkt.Payload) != "25.5" {
+		t.Errorf("expected payload '25.5', got %q", string(pkt.Payload))
 	}
 }

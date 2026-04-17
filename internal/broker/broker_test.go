@@ -12,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/langzp/dmqtt/internal/auth"
+	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/codec"
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
@@ -910,4 +911,86 @@ func TestBroker_CircuitOpenFallsBackToOffline(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected 1 offline message, got %d", count)
 	}
+}
+
+func TestBroker_MigrationBrokerAPI(t *testing.T) {
+b := New(":0", nil)
+
+// Create a session with subscriptions
+session := b.sessions.Create("dev-1", false)
+session.Subscriptions["test/#"] = 1
+
+// Add offline messages
+b.offlineStore.Enqueue("dev-1", &OfflineMessage{
+Topic:   "test/1",
+Payload: []byte("msg1"),
+QoS:     1,
+})
+b.offlineStore.Enqueue("dev-1", &OfflineMessage{
+Topic:   "test/2",
+Payload: []byte("msg2"),
+QoS:     0,
+})
+
+// Test GetOfflineMessages
+msgs := b.GetOfflineMessages("dev-1")
+if len(msgs) != 2 {
+t.Fatalf("expected 2 offline messages, got %d", len(msgs))
+}
+
+// Test GetSessionData
+sd := b.GetSessionData("dev-1")
+if sd == nil {
+t.Fatal("expected session data")
+}
+if sd.ClientID != "dev-1" {
+t.Fatalf("expected dev-1, got %s", sd.ClientID)
+}
+if sd.Subscriptions["test/#"] != 1 {
+t.Fatal("expected subscription test/# with QoS 1")
+}
+
+// Test DeleteOfflineMessages
+b.DeleteOfflineMessages("dev-1")
+if b.offlineStore.Count("dev-1") != 0 {
+t.Fatal("offline messages should be deleted")
+}
+
+// Test DeleteSession
+b.DeleteSession("dev-1")
+if b.sessions.Get("dev-1") != nil {
+t.Fatal("session should be deleted")
+}
+}
+
+func TestBroker_ImportMigrateData(t *testing.T) {
+b := New(":0", nil)
+
+migrateMsg := cluster.MigrateDataMessage{
+DeviceID: "dev-2",
+Messages: []cluster.MigrateOfflineMsg{
+{Topic: "imported/1", Payload: []byte("data"), QoS: 1},
+},
+Session: &cluster.MigrateSessionData{
+ClientID:      "dev-2",
+CleanSession:  false,
+Subscriptions: map[string]byte{"imported/#": 1},
+},
+}
+
+b.ImportMigrateData(migrateMsg)
+
+// Verify offline messages imported
+if b.offlineStore.Count("dev-2") != 1 {
+t.Fatalf("expected 1 offline message, got %d", b.offlineStore.Count("dev-2"))
+}
+
+// Verify session imported
+session := b.sessions.Get("dev-2")
+if session == nil {
+t.Fatal("session should be created")
+}
+if session.Subscriptions["imported/#"] != 1 {
+t.Fatal("subscription should be imported")
+}
 }

@@ -319,3 +319,76 @@ func (b *Broker) IsReady() bool {
 	defer b.mu.RUnlock()
 	return len(b.listeners) > 0
 }
+
+// --- MigrationBrokerAPI implementation ---
+
+// DisconnectDevice forcefully disconnects a device (same as disconnectExisting).
+func (b *Broker) DisconnectDevice(deviceID string) {
+	b.disconnectExisting(deviceID)
+}
+
+// GetOfflineMessages returns offline messages for a device as migration-friendly format.
+func (b *Broker) GetOfflineMessages(deviceID string) []cluster.MigrateOfflineMsg {
+	msgs := b.offlineStore.Dequeue(deviceID, b.offlineStore.Count(deviceID))
+	result := make([]cluster.MigrateOfflineMsg, len(msgs))
+	for i, m := range msgs {
+		result[i] = cluster.MigrateOfflineMsg{
+			Topic:   m.Topic,
+			Payload: m.Payload,
+			QoS:     m.QoS,
+		}
+	}
+	// Re-enqueue since Dequeue is destructive — we want to keep until cleanup
+	for _, m := range msgs {
+		b.offlineStore.Enqueue(deviceID, m)
+	}
+	return result
+}
+
+// DeleteOfflineMessages removes all offline messages for a device.
+func (b *Broker) DeleteOfflineMessages(deviceID string) {
+	b.offlineStore.RemoveAll(deviceID)
+}
+
+// GetSessionData returns session data for migration.
+func (b *Broker) GetSessionData(clientID string) *cluster.MigrateSessionData {
+	session := b.sessions.Get(clientID)
+	if session == nil {
+		return nil
+	}
+	subs := make(map[string]byte, len(session.Subscriptions))
+	for k, v := range session.Subscriptions {
+		subs[k] = v
+	}
+	return &cluster.MigrateSessionData{
+		ClientID:      session.ClientID,
+		CleanSession:  session.CleanSession,
+		Subscriptions: subs,
+	}
+}
+
+// DeleteSession removes a session.
+func (b *Broker) DeleteSession(clientID string) {
+	b.sessions.Remove(clientID)
+}
+
+// ImportMigrateData stores incoming migration data.
+func (b *Broker) ImportMigrateData(msg cluster.MigrateDataMessage) {
+	// Import offline messages
+	for _, m := range msg.Messages {
+		b.offlineStore.Enqueue(msg.DeviceID, &OfflineMessage{
+			Topic:   m.Topic,
+			Payload: m.Payload,
+			QoS:     m.QoS,
+		})
+	}
+	// Import session
+	if msg.Session != nil {
+		session := b.sessions.Create(msg.Session.ClientID, msg.Session.CleanSession)
+		for filter, qos := range msg.Session.Subscriptions {
+			session.Subscriptions[filter] = qos
+			b.subscriptions.Add(msg.Session.ClientID, filter, qos)
+		}
+		b.sessions.Save(msg.Session.ClientID)
+	}
+}

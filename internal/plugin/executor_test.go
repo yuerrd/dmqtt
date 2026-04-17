@@ -13,9 +13,9 @@ type slowInterceptor struct {
 	delay time.Duration
 }
 
-func (s *slowInterceptor) Name() string  { return "slow" }
-func (s *slowInterceptor) Init() error   { return nil }
-func (s *slowInterceptor) Close() error  { return nil }
+func (s *slowInterceptor) Name() string { return "slow" }
+func (s *slowInterceptor) Init() error  { return nil }
+func (s *slowInterceptor) Close() error { return nil }
 func (s *slowInterceptor) OnPublish(ctx context.Context, evt *PublishEvent) error {
 	select {
 	case <-time.After(s.delay):
@@ -27,9 +27,9 @@ func (s *slowInterceptor) OnPublish(ctx context.Context, evt *PublishEvent) erro
 
 type failInterceptor struct{}
 
-func (f *failInterceptor) Name() string  { return "fail" }
-func (f *failInterceptor) Init() error   { return nil }
-func (f *failInterceptor) Close() error  { return nil }
+func (f *failInterceptor) Name() string { return "fail" }
+func (f *failInterceptor) Init() error  { return nil }
+func (f *failInterceptor) Close() error { return nil }
 func (f *failInterceptor) OnPublish(ctx context.Context, evt *PublishEvent) error {
 	return errors.New("rejected")
 }

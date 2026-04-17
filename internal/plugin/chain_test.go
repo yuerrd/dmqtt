@@ -14,9 +14,9 @@ type recordingInterceptor struct {
 	published []string
 }
 
-func (r *recordingInterceptor) Name() string  { return r.name }
-func (r *recordingInterceptor) Init() error   { return nil }
-func (r *recordingInterceptor) Close() error  { return nil }
+func (r *recordingInterceptor) Name() string { return r.name }
+func (r *recordingInterceptor) Init() error  { return nil }
+func (r *recordingInterceptor) Close() error { return nil }
 
 func (r *recordingInterceptor) OnConnect(ctx context.Context, evt *ConnectEvent) error {
 	r.connected = append(r.connected, evt.ClientID)
@@ -32,9 +32,9 @@ type rejectInterceptor struct {
 	name string
 }
 
-func (r *rejectInterceptor) Name() string  { return r.name }
-func (r *rejectInterceptor) Init() error   { return nil }
-func (r *rejectInterceptor) Close() error  { return nil }
+func (r *rejectInterceptor) Name() string { return r.name }
+func (r *rejectInterceptor) Init() error  { return nil }
+func (r *rejectInterceptor) Close() error { return nil }
 func (r *rejectInterceptor) OnPublish(ctx context.Context, evt *PublishEvent) error {
 	return errors.New("rejected by " + r.name)
 }
@@ -43,9 +43,9 @@ type disconnectRecorder struct {
 	count atomic.Int32
 }
 
-func (d *disconnectRecorder) Name() string  { return "disconn-recorder" }
-func (d *disconnectRecorder) Init() error   { return nil }
-func (d *disconnectRecorder) Close() error  { return nil }
+func (d *disconnectRecorder) Name() string { return "disconn-recorder" }
+func (d *disconnectRecorder) Init() error  { return nil }
+func (d *disconnectRecorder) Close() error { return nil }
 func (d *disconnectRecorder) OnDisconnect(evt *DisconnectEvent) {
 	d.count.Add(1)
 }

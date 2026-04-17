@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/langzp/dmqtt/internal/circuitbreaker"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/langzp/dmqtt/internal/plugin"
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
@@ -29,6 +31,7 @@ type Broker struct {
 	authenticator auth.Authenticator
 	authorizer    auth.Authorizer
 	rateLimiter   ratelimit.RateLimiter
+	interceptors  *plugin.InterceptorChain
 
 	inflightLimit int
 
@@ -191,6 +194,11 @@ func (b *Broker) SetRateLimiter(rl ratelimit.RateLimiter) {
 	b.rateLimiter = rl
 }
 
+// SetInterceptors sets the interceptor chain for the broker.
+func (b *Broker) SetInterceptors(chain *plugin.InterceptorChain) {
+	b.interceptors = chain
+}
+
 // Cluster returns the attached cluster, or nil if standalone.
 func (b *Broker) Cluster() *cluster.Cluster {
 	return b.cluster
@@ -235,7 +243,20 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 
 		client, ok := b.clients[match.ClientID]
 		if ok {
-			client.deliverMessage(topic, payload, effectiveQoS)
+			if b.interceptors != nil {
+				evt := &plugin.DeliveryEvent{
+					ClientID: match.ClientID,
+					Topic:    topic,
+					Payload:  payload,
+					QoS:      effectiveQoS,
+				}
+				if err := b.interceptors.OnDelivery(context.Background(), evt); err != nil {
+					continue
+				}
+				client.deliverMessage(evt.Topic, evt.Payload, evt.QoS)
+			} else {
+				client.deliverMessage(topic, payload, effectiveQoS)
+			}
 		} else {
 			session := b.sessions.Get(match.ClientID)
 			if session != nil && !session.CleanSession {

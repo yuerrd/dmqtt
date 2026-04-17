@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/langzp/dmqtt/internal/codec"
 	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/langzp/dmqtt/internal/plugin"
 )
 
 // Client represents a connected MQTT client.
@@ -154,6 +156,21 @@ func (c *Client) handleConnect() error {
 
 	metrics.ConnectionOpened()
 
+	if c.broker.interceptors != nil {
+		evt := &plugin.ConnectEvent{
+			ClientID:     c.clientID,
+			Username:     c.username,
+			CleanSession: pkt.CleanSession,
+			RemoteAddr:   c.conn.RemoteAddr().String(),
+		}
+		if err := c.broker.interceptors.OnConnect(context.Background(), evt); err != nil {
+			slog.Info("connect rejected by interceptor", "client", c.clientID, "error", err)
+			connack := &codec.ConnackPacket{ReturnCode: codec.ConnackNotAuthorized}
+			c.send(connack.Encode())
+			return fmt.Errorf("interceptor rejected: %w", err)
+		}
+	}
+
 	connack := &codec.ConnackPacket{
 		SessionPresent: sessionPresent,
 		ReturnCode:     codec.ConnackAccepted,
@@ -211,7 +228,22 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 		c.broker.retainStore.Set(pkt.Topic, pkt.Payload, fh.QoS)
 	}
 
-	c.broker.routeMessage(pkt.Topic, pkt.Payload, fh.QoS, fh.Retain, false)
+	if c.broker.interceptors != nil {
+		evt := &plugin.PublishEvent{
+			ClientID: c.clientID,
+			Topic:    pkt.Topic,
+			Payload:  pkt.Payload,
+			QoS:      fh.QoS,
+			Retain:   fh.Retain,
+		}
+		if err := c.broker.interceptors.OnPublish(context.Background(), evt); err != nil {
+			slog.Debug("publish rejected by interceptor", "client", c.clientID, "topic", pkt.Topic, "error", err)
+			return
+		}
+		c.broker.routeMessage(evt.Topic, evt.Payload, evt.QoS, evt.Retain, false)
+	} else {
+		c.broker.routeMessage(pkt.Topic, pkt.Payload, fh.QoS, fh.Retain, false)
+	}
 }
 
 func (c *Client) handlePuback(data []byte) {
@@ -310,6 +342,20 @@ func (c *Client) handleSubscribe(data []byte) {
 			grantedQoS = 2
 		}
 
+		if c.broker.interceptors != nil {
+			evt := &plugin.SubscribeEvent{
+				ClientID:    c.clientID,
+				TopicFilter: sub.TopicFilter,
+				QoS:         grantedQoS,
+			}
+			if err := c.broker.interceptors.OnSubscribe(context.Background(), evt); err != nil {
+				slog.Debug("subscribe rejected by interceptor", "client", c.clientID, "filter", sub.TopicFilter, "error", err)
+				returnCodes[i] = 0x80
+				continue
+			}
+			grantedQoS = evt.QoS
+		}
+
 		c.broker.subscriptions.Add(c.clientID, sub.TopicFilter, grantedQoS)
 		if session != nil {
 			session.Subscriptions[sub.TopicFilter] = grantedQoS
@@ -396,6 +442,18 @@ func (c *Client) close() {
 		}
 
 		metrics.ConnectionClosed()
+
+		if c.broker.interceptors != nil {
+			reason := "error"
+			if c.will == nil {
+				reason = "clean"
+			}
+			c.broker.interceptors.OnDisconnect(&plugin.DisconnectEvent{
+				ClientID:   c.clientID,
+				Reason:     reason,
+				RemoteAddr: c.conn.RemoteAddr().String(),
+			})
+		}
 
 		if c.will != nil {
 			if c.will.Retain {

@@ -63,6 +63,9 @@ type Config struct {
 
 	// Shard migration configuration
 	Migration MigrationConfig
+
+	// Audit interceptor configuration
+	Audit AuditConfig
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -144,6 +147,13 @@ type MigrationConfig struct {
 	AutoRebalance   bool `json:"auto_rebalance"`    // Auto-migrate on ring changes (default: true)
 }
 
+// AuditConfig holds audit interceptor settings.
+type AuditConfig struct {
+	Enabled    bool   `json:"enabled"`
+	BufferSize int    `json:"buffer_size"`
+	BackupPath string `json:"backup_path"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -203,6 +213,10 @@ func DefaultConfig() *Config {
 			BatchIntervalMs: 1000,
 			MaxRetries:      3,
 			AutoRebalance:   true,
+		},
+		Audit: AuditConfig{
+			Enabled:    false,
+			BufferSize: 4096,
 		},
 	}
 }

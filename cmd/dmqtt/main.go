@@ -15,6 +15,8 @@ import (
 	"github.com/langzp/dmqtt/internal/httpapi"
 	"github.com/langzp/dmqtt/internal/logging"
 	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/langzp/dmqtt/internal/plugin/audit"
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
@@ -66,6 +68,23 @@ func main() {
 
 	b := broker.New(cfg.TCPAddr, store)
 	b.SetAuth(authn, authz)
+
+	// Interceptor chain
+	chain := plugin.NewInterceptorChain()
+	if cfg.Audit.Enabled {
+		auditInterceptor := audit.New(audit.Config{
+			BufferSize: cfg.Audit.BufferSize,
+			BackupPath: cfg.Audit.BackupPath,
+		}, nil)
+		chain.Register(auditInterceptor, plugin.WithTimeout(50*time.Millisecond))
+		slog.Info("audit interceptor enabled", "bufferSize", cfg.Audit.BufferSize)
+	}
+	if err := chain.InitAll(); err != nil {
+		slog.Error("failed to initialize interceptors", "error", err)
+		os.Exit(1)
+	}
+	b.SetInterceptors(chain)
+	defer chain.CloseAll()
 
 	// Rate limiting
 	if cfg.RateLimit.Enabled {

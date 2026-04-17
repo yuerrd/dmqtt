@@ -140,6 +140,21 @@ func main() {
 		b.SetCluster(c)
 		slog.Info("cluster mode enabled", "node", cfg.Cluster.NodeID, "gossipPort", cfg.Cluster.GossipPort)
 
+		// Migration configuration
+		migCfg := cluster.MigrationConfig{
+			BatchSize:     cfg.Migration.BatchSize,
+			BatchInterval: time.Duration(cfg.Migration.BatchIntervalMs) * time.Millisecond,
+			MaxRetries:    cfg.Migration.MaxRetries,
+		}
+		c.SetMigrationBrokerAPI(b)
+		c.SetMigrationConfig(migCfg)
+		c.SetAutoRebalance(cfg.Migration.AutoRebalance)
+		slog.Info("migration configured",
+			"autoRebalance", cfg.Migration.AutoRebalance,
+			"maxParallel", cfg.Migration.MaxParallel,
+			"batchSize", cfg.Migration.BatchSize,
+		)
+
 		defer func() {
 			slog.Info("leaving cluster")
 			c.Stop()
@@ -149,6 +164,9 @@ func main() {
 	}
 
 	httpSrv := httpapi.New(cfg.HTTPAddr, b)
+	if cfg.Cluster.Enabled && b.Cluster() != nil && b.Cluster().Coordinator() != nil {
+		httpSrv.SetMigrationCoordinator(b.Cluster().Coordinator())
+	}
 	if err := httpSrv.Start(); err != nil {
 		slog.Error("failed to start HTTP API", "addr", cfg.HTTPAddr, "error", err)
 		os.Exit(1)

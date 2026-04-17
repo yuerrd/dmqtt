@@ -18,9 +18,9 @@ func NewRuleInterceptor(engine *Engine) *RuleInterceptor {
 	return &RuleInterceptor{engine: engine}
 }
 
-func (r *RuleInterceptor) Name() string  { return "rule-engine" }
-func (r *RuleInterceptor) Init() error   { return nil }
-func (r *RuleInterceptor) Close() error  { r.engine.Close(); return nil }
+func (r *RuleInterceptor) Name() string { return "rule-engine" }
+func (r *RuleInterceptor) Init() error  { return nil }
+func (r *RuleInterceptor) Close() error { r.engine.Close(); return nil }
 
 // OnPublish evaluates all rules against the published message.
 // Always returns nil — never blocks or rejects the original publish.

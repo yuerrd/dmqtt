@@ -18,6 +18,7 @@ import (
 	"github.com/langzp/dmqtt/internal/codec"
 	"github.com/langzp/dmqtt/internal/plugin"
 	"github.com/langzp/dmqtt/internal/ratelimit"
+	"github.com/langzp/dmqtt/internal/rule"
 	"github.com/langzp/dmqtt/internal/storage"
 )
 
@@ -917,196 +918,275 @@ func TestBroker_CircuitOpenFallsBackToOffline(t *testing.T) {
 }
 
 func TestBroker_MigrationBrokerAPI(t *testing.T) {
-b := New(":0", nil)
+	b := New(":0", nil)
 
-// Create a session with subscriptions
-session := b.sessions.Create("dev-1", false)
-session.Subscriptions["test/#"] = 1
+	// Create a session with subscriptions
+	session := b.sessions.Create("dev-1", false)
+	session.Subscriptions["test/#"] = 1
 
-// Add offline messages
-b.offlineStore.Enqueue("dev-1", &OfflineMessage{
-Topic:   "test/1",
-Payload: []byte("msg1"),
-QoS:     1,
-})
-b.offlineStore.Enqueue("dev-1", &OfflineMessage{
-Topic:   "test/2",
-Payload: []byte("msg2"),
-QoS:     0,
-})
+	// Add offline messages
+	b.offlineStore.Enqueue("dev-1", &OfflineMessage{
+		Topic:   "test/1",
+		Payload: []byte("msg1"),
+		QoS:     1,
+	})
+	b.offlineStore.Enqueue("dev-1", &OfflineMessage{
+		Topic:   "test/2",
+		Payload: []byte("msg2"),
+		QoS:     0,
+	})
 
-// Test GetOfflineMessages
-msgs := b.GetOfflineMessages("dev-1")
-if len(msgs) != 2 {
-t.Fatalf("expected 2 offline messages, got %d", len(msgs))
-}
+	// Test GetOfflineMessages
+	msgs := b.GetOfflineMessages("dev-1")
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 offline messages, got %d", len(msgs))
+	}
 
-// Test GetSessionData
-sd := b.GetSessionData("dev-1")
-if sd == nil {
-t.Fatal("expected session data")
-}
-if sd.ClientID != "dev-1" {
-t.Fatalf("expected dev-1, got %s", sd.ClientID)
-}
-if sd.Subscriptions["test/#"] != 1 {
-t.Fatal("expected subscription test/# with QoS 1")
-}
+	// Test GetSessionData
+	sd := b.GetSessionData("dev-1")
+	if sd == nil {
+		t.Fatal("expected session data")
+	}
+	if sd.ClientID != "dev-1" {
+		t.Fatalf("expected dev-1, got %s", sd.ClientID)
+	}
+	if sd.Subscriptions["test/#"] != 1 {
+		t.Fatal("expected subscription test/# with QoS 1")
+	}
 
-// Test DeleteOfflineMessages
-b.DeleteOfflineMessages("dev-1")
-if b.offlineStore.Count("dev-1") != 0 {
-t.Fatal("offline messages should be deleted")
-}
+	// Test DeleteOfflineMessages
+	b.DeleteOfflineMessages("dev-1")
+	if b.offlineStore.Count("dev-1") != 0 {
+		t.Fatal("offline messages should be deleted")
+	}
 
-// Test DeleteSession
-b.DeleteSession("dev-1")
-if b.sessions.Get("dev-1") != nil {
-t.Fatal("session should be deleted")
-}
+	// Test DeleteSession
+	b.DeleteSession("dev-1")
+	if b.sessions.Get("dev-1") != nil {
+		t.Fatal("session should be deleted")
+	}
 }
 
 func TestBroker_ImportMigrateData(t *testing.T) {
-b := New(":0", nil)
+	b := New(":0", nil)
 
-migrateMsg := cluster.MigrateDataMessage{
-DeviceID: "dev-2",
-Messages: []cluster.MigrateOfflineMsg{
-{Topic: "imported/1", Payload: []byte("data"), QoS: 1},
-},
-Session: &cluster.MigrateSessionData{
-ClientID:      "dev-2",
-CleanSession:  false,
-Subscriptions: map[string]byte{"imported/#": 1},
-},
-}
+	migrateMsg := cluster.MigrateDataMessage{
+		DeviceID: "dev-2",
+		Messages: []cluster.MigrateOfflineMsg{
+			{Topic: "imported/1", Payload: []byte("data"), QoS: 1},
+		},
+		Session: &cluster.MigrateSessionData{
+			ClientID:      "dev-2",
+			CleanSession:  false,
+			Subscriptions: map[string]byte{"imported/#": 1},
+		},
+	}
 
-b.ImportMigrateData(migrateMsg)
+	b.ImportMigrateData(migrateMsg)
 
-// Verify offline messages imported
-if b.offlineStore.Count("dev-2") != 1 {
-t.Fatalf("expected 1 offline message, got %d", b.offlineStore.Count("dev-2"))
-}
+	// Verify offline messages imported
+	if b.offlineStore.Count("dev-2") != 1 {
+		t.Fatalf("expected 1 offline message, got %d", b.offlineStore.Count("dev-2"))
+	}
 
-// Verify session imported
-session := b.sessions.Get("dev-2")
-if session == nil {
-t.Fatal("session should be created")
-}
-if session.Subscriptions["imported/#"] != 1 {
-t.Fatal("subscription should be imported")
-}
+	// Verify session imported
+	session := b.sessions.Get("dev-2")
+	if session == nil {
+		t.Fatal("session should be created")
+	}
+	if session.Subscriptions["imported/#"] != 1 {
+		t.Fatal("subscription should be imported")
+	}
 }
 
 // --- Interceptor test types ---
 
 type testRejectPublishInterceptor struct{}
 
-func (t *testRejectPublishInterceptor) Name() string  { return "reject-publish" }
-func (t *testRejectPublishInterceptor) Init() error   { return nil }
-func (t *testRejectPublishInterceptor) Close() error  { return nil }
+func (t *testRejectPublishInterceptor) Name() string { return "reject-publish" }
+func (t *testRejectPublishInterceptor) Init() error  { return nil }
+func (t *testRejectPublishInterceptor) Close() error { return nil }
 func (t *testRejectPublishInterceptor) OnPublish(ctx context.Context, evt *plugin.PublishEvent) error {
-return fmt.Errorf("publish rejected")
+	return fmt.Errorf("publish rejected")
 }
 
 type testRejectConnectInterceptor struct {
-blockedClient string
+	blockedClient string
 }
 
-func (t *testRejectConnectInterceptor) Name() string  { return "reject-connect" }
-func (t *testRejectConnectInterceptor) Init() error   { return nil }
-func (t *testRejectConnectInterceptor) Close() error  { return nil }
+func (t *testRejectConnectInterceptor) Name() string { return "reject-connect" }
+func (t *testRejectConnectInterceptor) Init() error  { return nil }
+func (t *testRejectConnectInterceptor) Close() error { return nil }
 func (t *testRejectConnectInterceptor) OnConnect(ctx context.Context, evt *plugin.ConnectEvent) error {
-if evt.ClientID == t.blockedClient {
-return fmt.Errorf("client %s is blocked", evt.ClientID)
-}
-return nil
+	if evt.ClientID == t.blockedClient {
+		return fmt.Errorf("client %s is blocked", evt.ClientID)
+	}
+	return nil
 }
 
 // --- Interceptor integration tests ---
 
 func TestInterceptor_OnPublishReject(t *testing.T) {
-b := New(":0", nil)
+	b := New(":0", nil)
 
-chain := plugin.NewInterceptorChain()
-chain.Register(&testRejectPublishInterceptor{})
-chain.InitAll()
-defer chain.CloseAll()
-b.SetInterceptors(chain)
+	chain := plugin.NewInterceptorChain()
+	chain.Register(&testRejectPublishInterceptor{})
+	chain.InitAll()
+	defer chain.CloseAll()
+	b.SetInterceptors(chain)
 
-go b.Start()
-defer b.Stop()
-waitForBroker(t, b)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
 
-// Subscribe
-sub := dial(t, b.Addr())
-defer sub.Close()
-mqttConnect(t, sub, "sub-1", true)
-mqttSubscribe(t, sub, 1, "test/topic", 0)
-time.Sleep(50 * time.Millisecond)
+	// Subscribe
+	sub := dial(t, b.Addr())
+	defer sub.Close()
+	mqttConnect(t, sub, "sub-1", true)
+	mqttSubscribe(t, sub, 1, "test/topic", 0)
+	time.Sleep(50 * time.Millisecond)
 
-// Publish — should be rejected by interceptor
-pub := dial(t, b.Addr())
-defer pub.Close()
-mqttConnect(t, pub, "pub-1", true)
-mqttPublishQoS0(t, pub, "test/topic", []byte("hello"))
+	// Publish — should be rejected by interceptor
+	pub := dial(t, b.Addr())
+	defer pub.Close()
+	mqttConnect(t, pub, "pub-1", true)
+	mqttPublishQoS0(t, pub, "test/topic", []byte("hello"))
 
-time.Sleep(200 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
-// Subscriber should NOT receive the message
-sub.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-buf := make([]byte, 256)
-_, err := sub.Read(buf)
-if err == nil {
-t.Fatal("expected no message (publish should have been rejected)")
-}
+	// Subscriber should NOT receive the message
+	sub.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 256)
+	_, err := sub.Read(buf)
+	if err == nil {
+		t.Fatal("expected no message (publish should have been rejected)")
+	}
 }
 
 func TestInterceptor_OnConnectReject(t *testing.T) {
-b := New(":0", nil)
+	b := New(":0", nil)
 
-chain := plugin.NewInterceptorChain()
-chain.Register(&testRejectConnectInterceptor{blockedClient: "blocked-client"})
-chain.InitAll()
-defer chain.CloseAll()
-b.SetInterceptors(chain)
+	chain := plugin.NewInterceptorChain()
+	chain.Register(&testRejectConnectInterceptor{blockedClient: "blocked-client"})
+	chain.InitAll()
+	defer chain.CloseAll()
+	b.SetInterceptors(chain)
 
-go b.Start()
-defer b.Stop()
-waitForBroker(t, b)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
 
-// Try to connect with blocked client ID
-conn := dial(t, b.Addr())
-defer conn.Close()
+	// Try to connect with blocked client ID
+	conn := dial(t, b.Addr())
+	defer conn.Close()
 
-// Send CONNECT manually
-var payload bytes.Buffer
-writeUTF8(&payload, "MQTT")
-payload.WriteByte(0x04)      // protocol level
-payload.WriteByte(0x02)      // flags: clean session
-payload.Write([]byte{0, 60}) // keep alive
-writeUTF8(&payload, "blocked-client")
+	// Send CONNECT manually
+	var payload bytes.Buffer
+	writeUTF8(&payload, "MQTT")
+	payload.WriteByte(0x04)      // protocol level
+	payload.WriteByte(0x02)      // flags: clean session
+	payload.Write([]byte{0, 60}) // keep alive
+	writeUTF8(&payload, "blocked-client")
 
-fh := codec.FixedHeader{
-PacketType:      codec.CONNECT,
-RemainingLength: payload.Len(),
+	fh := codec.FixedHeader{
+		PacketType:      codec.CONNECT,
+		RemainingLength: payload.Len(),
+	}
+	conn.Write(fh.Encode())
+	conn.Write(payload.Bytes())
+
+	// Read CONNACK — should be refused
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	respFH, data, err := codec.ReadPacket(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if respFH.PacketType != codec.CONNACK {
+		t.Fatalf("expected CONNACK, got %s", codec.PacketTypeName(respFH.PacketType))
+	}
+	if len(data) < 2 {
+		t.Fatal("CONNACK too short")
+	}
+	if data[1] == codec.ConnackAccepted {
+		t.Fatal("expected connection to be rejected")
+	}
 }
-conn.Write(fh.Encode())
-conn.Write(payload.Bytes())
 
-// Read CONNACK — should be refused
-conn.SetReadDeadline(time.Now().Add(time.Second))
-respFH, data, err := codec.ReadPacket(conn)
-if err != nil {
-t.Fatal(err)
-}
-if respFH.PacketType != codec.CONNACK {
-t.Fatalf("expected CONNACK, got %s", codec.PacketTypeName(respFH.PacketType))
-}
-if len(data) < 2 {
-t.Fatal("CONNACK too short")
-}
-if data[1] == codec.ConnackAccepted {
-t.Fatal("expected connection to be rejected")
-}
+func TestRuleEngine_PublishAction(t *testing.T) {
+	b := New(":0", nil)
+
+	// Create rule engine with republish rule:
+	// messages on "sensors/+/temp" with temp>50 → republish to "alerts/high-temp"
+	rulesYAML := []byte(`
+rules:
+  - rule_id: high-temp
+    enabled: true
+    source:
+      topic: "sensors/+/temp"
+    filter: "payload.temp > 50.0"
+    actions:
+      - type: publish
+        target_topic: "alerts/high-temp"
+`)
+
+	ruleEngine, err := rule.NewEngine(b.RouteMessage, rule.EngineConfig{
+		WorkerPoolSize: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ruleEngine.LoadRulesFromBytes(rulesYAML); err != nil {
+		t.Fatal(err)
+	}
+	defer ruleEngine.Close()
+
+	chain := plugin.NewInterceptorChain()
+	chain.Register(rule.NewRuleInterceptor(ruleEngine))
+	chain.InitAll()
+	defer chain.CloseAll()
+	b.SetInterceptors(chain)
+
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	// Subscribe to alerts/high-temp
+	sub := dial(t, b.Addr())
+	defer sub.Close()
+	mqttConnect(t, sub, "alert-sub", true)
+	mqttSubscribe(t, sub, 1, "alerts/high-temp", 0)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a message that should trigger the rule
+	pub := dial(t, b.Addr())
+	defer pub.Close()
+	mqttConnect(t, pub, "sensor-pub", true)
+	mqttPublishQoS0(t, pub, "sensors/livingroom/temp", []byte(`{"temp":75}`))
+
+	// Subscriber should receive the republished message
+	sub.SetReadDeadline(time.Now().Add(2 * time.Second))
+	fh, data, err := codec.ReadPacket(sub)
+	if err != nil {
+		t.Fatal("expected republished message, got error:", err)
+	}
+	if fh.PacketType != codec.PUBLISH {
+		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
+	}
+	// Verify topic in PUBLISH packet: 2 bytes length + topic string
+	topicLen := int(data[0])<<8 | int(data[1])
+	topic := string(data[2 : 2+topicLen])
+	if topic != "alerts/high-temp" {
+		t.Fatalf("expected topic 'alerts/high-temp', got '%s'", topic)
+	}
+
+	// Now publish a message that should NOT trigger (temp <= 50)
+	mqttPublishQoS0(t, pub, "sensors/kitchen/temp", []byte(`{"temp":30}`))
+	time.Sleep(300 * time.Millisecond)
+
+	sub.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 256)
+	_, err = sub.Read(buf)
+	if err == nil {
+		t.Fatal("expected no message for temp=30")
+	}
 }

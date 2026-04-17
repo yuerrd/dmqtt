@@ -3,11 +3,11 @@ package rule
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/cel-go/cel"
-	"github.com/langzp/dmqtt/internal/broker"
 	"github.com/langzp/dmqtt/internal/metrics"
 )
 
@@ -92,7 +92,7 @@ func (e *Engine) Evaluate(topic string, payload []byte, qos byte, clientID strin
 	e.mu.RUnlock()
 
 	for _, cr := range rules {
-		if !broker.TopicMatch(cr.Source.Topic, topic) {
+		if !topicMatch(cr.Source.Topic, topic) {
 			continue
 		}
 
@@ -122,4 +122,31 @@ func (e *Engine) RuleCount() int {
 // Close shuts down the engine and waits for pending actions.
 func (e *Engine) Close() {
 	e.executor.Close()
+}
+
+// topicMatch checks if a topic name matches a subscription filter.
+// Duplicated from broker package to avoid import cycle.
+func topicMatch(filter, topic string) bool {
+	if len(topic) > 0 && topic[0] == '$' {
+		if len(filter) > 0 && (filter[0] == '+' || filter[0] == '#') {
+			return false
+		}
+	}
+	filterParts := strings.Split(filter, "/")
+	topicParts := strings.Split(topic, "/")
+	for i := 0; i < len(filterParts); i++ {
+		if filterParts[i] == "#" {
+			return true
+		}
+		if i >= len(topicParts) {
+			return false
+		}
+		if filterParts[i] == "+" {
+			continue
+		}
+		if filterParts[i] != topicParts[i] {
+			return false
+		}
+	}
+	return len(filterParts) == len(topicParts)
 }

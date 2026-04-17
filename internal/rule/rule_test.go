@@ -99,3 +99,126 @@ rules:
 		t.Fatal("expected error for publish without target_topic")
 	}
 }
+
+func TestCompileRule_ValidExpression(t *testing.T) {
+	env, err := newCELEnv()
+	if err != nil {
+		t.Fatalf("failed to create CEL env: %v", err)
+	}
+	r := Rule{
+		ID:      "test-1",
+		Enabled: true,
+		Filter:  "payload.temperature > 100",
+	}
+	cr, err := compileRule(env, r)
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+
+	// Should match
+	match, err := cr.evaluate("test/topic", []byte(`{"temperature": 150}`), 0, "client-1")
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if !match {
+		t.Error("expected match for temperature=150")
+	}
+
+	// Should not match
+	match, err = cr.evaluate("test/topic", []byte(`{"temperature": 50}`), 0, "client-1")
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if match {
+		t.Error("expected no match for temperature=50")
+	}
+}
+
+func TestCompileRule_InvalidExpression(t *testing.T) {
+	env, err := newCELEnv()
+	if err != nil {
+		t.Fatalf("failed to create CEL env: %v", err)
+	}
+	r := Rule{
+		ID:     "bad",
+		Filter: "payload.foo &&& invalid",
+	}
+	_, err = compileRule(env, r)
+	if err == nil {
+		t.Fatal("expected compilation error")
+	}
+}
+
+func TestCompiledRule_NonJSONPayload(t *testing.T) {
+	env, err := newCELEnv()
+	if err != nil {
+		t.Fatalf("failed to create CEL env: %v", err)
+	}
+	r := Rule{
+		ID:     "test-2",
+		Filter: "payload.x > 0",
+	}
+	cr, err := compileRule(env, r)
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+	match, err := cr.evaluate("test", []byte("not json"), 0, "c1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if match {
+		t.Error("non-JSON payload should not match")
+	}
+}
+
+func TestCompileRule_EmptyFilter(t *testing.T) {
+	env, err := newCELEnv()
+	if err != nil {
+		t.Fatalf("failed to create CEL env: %v", err)
+	}
+	r := Rule{
+		ID:     "always",
+		Filter: "",
+	}
+	cr, err := compileRule(env, r)
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+	match, err := cr.evaluate("test", []byte(`{}`), 0, "c1")
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if !match {
+		t.Error("empty filter should match (defaults to true)")
+	}
+}
+
+func TestCompileRule_TopicAndQoSAccess(t *testing.T) {
+	env, err := newCELEnv()
+	if err != nil {
+		t.Fatalf("failed to create CEL env: %v", err)
+	}
+	r := Rule{
+		ID:     "meta",
+		Filter: `topic == "devices/123/data" && qos >= 1`,
+	}
+	cr, err := compileRule(env, r)
+	if err != nil {
+		t.Fatalf("failed to compile: %v", err)
+	}
+	match, err := cr.evaluate("devices/123/data", []byte(`{}`), 1, "c1")
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if !match {
+		t.Error("expected match for topic=devices/123/data, qos=1")
+	}
+
+	match, err = cr.evaluate("other/topic", []byte(`{}`), 0, "c1")
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	if match {
+		t.Error("expected no match for wrong topic")
+	}
+}

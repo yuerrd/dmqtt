@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/metrics"
 )
 
 // PublishFunc is the callback to republish a message into the broker.
@@ -59,6 +61,7 @@ func (ae *ActionExecutor) Execute(ruleID string, topic string, payload []byte, q
 		action := a
 		select {
 		case ae.sem <- struct{}{}:
+			metrics.RuleAction()
 			ae.wg.Add(1)
 			go func() {
 				defer func() {
@@ -68,6 +71,7 @@ func (ae *ActionExecutor) Execute(ruleID string, topic string, payload []byte, q
 				ae.executeOne(ruleID, topic, payload, qos, clientID, action)
 			}()
 		default:
+			metrics.RuleActionDropped()
 			slog.Warn("rule action dropped: worker pool full",
 				"rule_id", ruleID, "action_type", action.Type)
 		}
@@ -107,12 +111,14 @@ func (ae *ActionExecutor) executeWebhook(ruleID, topic string, payload []byte, c
 
 	resp, err := ae.httpClient.Post(action.WebhookURL, "application/json", bytes.NewReader(data))
 	if err != nil {
+		metrics.RuleActionError()
 		slog.Error("webhook request failed", "rule_id", ruleID, "url", action.WebhookURL, "error", err)
 		return
 	}
 	resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		metrics.RuleActionError()
 		slog.Error("webhook returned error", "rule_id", ruleID, "url", action.WebhookURL, "status", resp.StatusCode)
 	}
 }

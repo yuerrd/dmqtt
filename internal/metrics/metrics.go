@@ -115,6 +115,26 @@ var (
 		Name: "dmqtt_audit_dropped_total",
 		Help: "Total audit entries dropped.",
 	})
+	ruleEvaluations = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_rule_evaluations_total",
+		Help: "Total rule evaluations performed.",
+	})
+	ruleMatches = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_rule_matches_total",
+		Help: "Total rules that matched (CEL filter returned true).",
+	})
+	ruleActions = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_rule_actions_total",
+		Help: "Total rule actions dispatched.",
+	})
+	ruleActionErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_rule_action_errors_total",
+		Help: "Total rule action execution errors.",
+	})
+	ruleActionsDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_rule_actions_dropped_total",
+		Help: "Total rule actions dropped (worker pool full).",
+	})
 )
 
 func init() {
@@ -145,6 +165,11 @@ func init() {
 		interceptorSkipped,
 		auditEntries,
 		auditDropped,
+		ruleEvaluations,
+		ruleMatches,
+		ruleActions,
+		ruleActionErrors,
+		ruleActionsDropped,
 	)
 }
 
@@ -284,3 +309,9 @@ func AuditEntry(action string) {
 func AuditDropped() {
 	auditDropped.Inc()
 }
+
+func RuleEvaluation()    { ruleEvaluations.Inc() }
+func RuleMatch()         { ruleMatches.Inc() }
+func RuleAction()        { ruleActions.Inc() }
+func RuleActionError()   { ruleActionErrors.Inc() }
+func RuleActionDropped() { ruleActionsDropped.Inc() }

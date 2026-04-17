@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/cel-go/cel"
 	"github.com/langzp/dmqtt/internal/broker"
+	"github.com/langzp/dmqtt/internal/metrics"
 )
 
 // EngineConfig configures the rule engine.
@@ -95,6 +96,7 @@ func (e *Engine) Evaluate(topic string, payload []byte, qos byte, clientID strin
 			continue
 		}
 
+		metrics.RuleEvaluation()
 		match, err := cr.evaluate(topic, payload, qos, clientID)
 		if err != nil {
 			slog.Error("rule evaluation error", "rule_id", cr.ID, "error", err)
@@ -104,6 +106,7 @@ func (e *Engine) Evaluate(topic string, payload []byte, qos byte, clientID strin
 			continue
 		}
 
+		metrics.RuleMatch()
 		slog.Debug("rule matched", "rule_id", cr.ID, "topic", topic)
 		e.executor.Execute(cr.ID, topic, payload, qos, clientID, cr.Actions)
 	}

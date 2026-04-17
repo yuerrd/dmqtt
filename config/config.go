@@ -60,6 +60,9 @@ type Config struct {
 
 	// Maximum inflight messages per client for flow control (default: 65535)
 	MaxInflight uint16
+
+	// Shard migration configuration
+	Migration MigrationConfig
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -132,6 +135,15 @@ type OfflineTierConfig struct {
 	LowTTL  time.Duration `json:"low_ttl"`
 }
 
+// MigrationConfig holds shard migration settings.
+type MigrationConfig struct {
+	MaxParallel     int  `json:"max_parallel"`      // Max concurrent migrations (default: 3)
+	BatchSize       int  `json:"batch_size"`         // Devices per batch (default: 1000)
+	BatchIntervalMs int  `json:"batch_interval_ms"`  // Milliseconds between batches (default: 1000)
+	MaxRetries      int  `json:"max_retries"`        // Data transfer retries (default: 3)
+	AutoRebalance   bool `json:"auto_rebalance"`     // Auto-migrate on ring changes (default: true)
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -185,5 +197,12 @@ func DefaultConfig() *Config {
 			LowTTL:  24 * time.Hour,
 		},
 		MaxInflight: 65535,
+		Migration: MigrationConfig{
+			MaxParallel:     3,
+			BatchSize:       1000,
+			BatchIntervalMs: 1000,
+			MaxRetries:      3,
+			AutoRebalance:   true,
+		},
 	}
 }

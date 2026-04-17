@@ -135,6 +135,18 @@ var (
 		Name: "dmqtt_rule_actions_dropped_total",
 		Help: "Total rule actions dropped (worker pool full).",
 	})
+	tenantConnectionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "dmqtt_tenant_connections_active",
+		Help: "Current active connections per tenant.",
+	}, []string{"tenant_id"})
+	tenantConnectionsRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_tenant_connections_rejected_total",
+		Help: "Total connections rejected per tenant (quota exhausted).",
+	}, []string{"tenant_id"})
+	tenantMessagesRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_tenant_messages_rejected_total",
+		Help: "Total messages rejected per tenant.",
+	}, []string{"tenant_id", "reason"})
 )
 
 func init() {
@@ -170,6 +182,9 @@ func init() {
 		ruleActions,
 		ruleActionErrors,
 		ruleActionsDropped,
+		tenantConnectionsActive,
+		tenantConnectionsRejected,
+		tenantMessagesRejected,
 	)
 }
 
@@ -315,3 +330,19 @@ func RuleMatch()         { ruleMatches.Inc() }
 func RuleAction()        { ruleActions.Inc() }
 func RuleActionError()   { ruleActionErrors.Inc() }
 func RuleActionDropped() { ruleActionsDropped.Inc() }
+
+func TenantConnectionOpened(tenantID string) {
+	tenantConnectionsActive.WithLabelValues(tenantID).Inc()
+}
+
+func TenantConnectionClosed(tenantID string) {
+	tenantConnectionsActive.WithLabelValues(tenantID).Dec()
+}
+
+func TenantConnectionRejected(tenantID string) {
+	tenantConnectionsRejected.WithLabelValues(tenantID).Inc()
+}
+
+func TenantMessageRejected(tenantID, reason string) {
+	tenantMessagesRejected.WithLabelValues(tenantID, reason).Inc()
+}

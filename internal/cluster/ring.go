@@ -92,3 +92,18 @@ func (r *Ring) Size() int {
 	defer r.mu.RUnlock()
 	return len(r.nodes)
 }
+
+// Snapshot returns a copy of the current ring for comparison purposes.
+func (r *Ring) Snapshot() *Ring {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	nodes := make([]NodeInfo, 0, len(r.nodes))
+	for _, n := range r.nodes {
+		nodes = append(nodes, n)
+	}
+
+	snap := NewRing(r.virtualNodes)
+	snap.Update(nodes)
+	return snap
+}

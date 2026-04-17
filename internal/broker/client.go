@@ -20,6 +20,7 @@ type Client struct {
 	will      *WillMessage
 	packetIDs *PacketIDAllocator
 	inflight  *InflightStore
+	keepAlive time.Duration
 
 	mu     sync.Mutex
 	closed bool
@@ -44,6 +45,9 @@ func (c *Client) serve() {
 	}
 
 	for {
+		if c.keepAlive > 0 {
+			c.conn.SetReadDeadline(time.Now().Add(c.keepAlive))
+		}
 		fh, data, err := codec.ReadPacket(c.conn)
 		if err != nil {
 			break
@@ -115,6 +119,10 @@ func (c *Client) handleConnect() error {
 	c.username = pkt.Username
 
 	c.clientID = pkt.ClientID
+
+	if pkt.KeepAlive > 0 {
+		c.keepAlive = time.Duration(float64(pkt.KeepAlive)*1.5) * time.Second
+	}
 
 	c.broker.disconnectExisting(c.clientID)
 

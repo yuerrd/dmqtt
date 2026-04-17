@@ -775,3 +775,67 @@ func TestBroker_PublishACL_Denied(t *testing.T) {
 	}
 	sub.SetReadDeadline(time.Time{})
 }
+
+func TestKeepAliveTimeout_TriggersWill(t *testing.T) {
+	b := New(":0", nil)
+	go b.Start()
+	defer b.Stop()
+	waitForBroker(t, b)
+
+	// Subscribe to will topic
+	sub := dial(t, b.Addr())
+	defer sub.Close()
+	mqttConnect(t, sub, "subscriber", true)
+	mqttSubscribe(t, sub, 1, "will/topic", 0)
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Connect client with will and short keep-alive (1 second)
+	conn, err := net.Dial("tcp", b.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var payload bytes.Buffer
+	writeUTF8(&payload, "MQTT")
+	payload.WriteByte(0x04) // protocol level
+	flags := byte(0x06)     // CleanSession + WillFlag
+	payload.WriteByte(flags)
+	payload.Write([]byte{0x00, 0x01}) // KeepAlive = 1 second
+	writeUTF8(&payload, "will-client")
+	writeUTF8(&payload, "will/topic")
+
+	// Will payload
+	willPayload := []byte("I died")
+	payload.WriteByte(byte(len(willPayload) >> 8))
+	payload.WriteByte(byte(len(willPayload)))
+	payload.Write(willPayload)
+
+	fh := codec.FixedHeader{PacketType: codec.CONNECT, RemainingLength: payload.Len()}
+	conn.Write(fh.Encode())
+	conn.Write(payload.Bytes())
+
+	// Read CONNACK
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	respFH, data, err := codec.ReadPacket(conn)
+	if err != nil || respFH.PacketType != codec.CONNACK || data[1] != codec.ConnackAccepted {
+		t.Fatalf("CONNACK failed: fh=%v data=%v err=%v", respFH, data, err)
+	}
+
+	// Don't send any more packets — wait for keep-alive timeout (1.5 * 1s = 1.5s)
+	time.Sleep(2500 * time.Millisecond)
+
+	// Check that subscriber received the will message
+	sub.SetReadDeadline(time.Now().Add(time.Second))
+	pubFH, pubData, err := codec.ReadPacket(sub)
+	if err != nil {
+		t.Fatalf("should have received will message: %v", err)
+	}
+	if pubFH.PacketType != codec.PUBLISH {
+		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(pubFH.PacketType))
+	}
+	pkt, _ := codec.DecodePublishPacket(pubData, pubFH.QoS)
+	if pkt.Topic != "will/topic" || string(pkt.Payload) != "I died" {
+		t.Fatalf("unexpected will: topic=%s payload=%s", pkt.Topic, string(pkt.Payload))
+	}
+}

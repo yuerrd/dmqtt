@@ -5,6 +5,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/langzp/dmqtt/internal/metrics"
 )
 
 const (
@@ -27,6 +29,16 @@ type OfflineStore struct {
 	queues       map[string][]*OfflineMessage
 	maxPerClient int
 	defaultTTL   time.Duration
+	tierConfig   *TierConfig
+}
+
+type TierConfig struct {
+	HighMax int
+	HighTTL time.Duration
+	MidMax  int
+	MidTTL  time.Duration
+	LowMax  int
+	LowTTL  time.Duration
 }
 
 func NewOfflineStore(maxPerClient int, defaultTTL time.Duration) *OfflineStore {
@@ -37,13 +49,20 @@ func NewOfflineStore(maxPerClient int, defaultTTL time.Duration) *OfflineStore {
 	}
 }
 
+func (s *OfflineStore) SetTierConfig(cfg *TierConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tierConfig = cfg
+}
+
 func (s *OfflineStore) Enqueue(clientID string, msg *OfflineMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	queue := s.queues[clientID]
-	// Remove expired
 	now := time.Now()
+
+	// Remove expired
 	filtered := queue[:0]
 	for _, m := range queue {
 		if !m.ExpiresAt.IsZero() && now.After(m.ExpiresAt) {
@@ -53,16 +72,55 @@ func (s *OfflineStore) Enqueue(clientID string, msg *OfflineMessage) error {
 	}
 	queue = filtered
 
-	if len(queue) >= s.maxPerClient {
-		s.queues[clientID] = queue
-		return fmt.Errorf("offline queue full for client %s (limit: %d)", clientID, s.maxPerClient)
-	}
-
 	if msg.CreatedAt.IsZero() {
 		msg.CreatedAt = now
 	}
-	if msg.ExpiresAt.IsZero() && s.defaultTTL > 0 {
+
+	// Apply tier-specific TTL
+	if s.tierConfig != nil && msg.ExpiresAt.IsZero() {
+		switch msg.Priority {
+		case PriorityHigh:
+			msg.ExpiresAt = msg.CreatedAt.Add(s.tierConfig.HighTTL)
+		case PriorityMedium:
+			msg.ExpiresAt = msg.CreatedAt.Add(s.tierConfig.MidTTL)
+		case PriorityLow:
+			msg.ExpiresAt = msg.CreatedAt.Add(s.tierConfig.LowTTL)
+		}
+	} else if msg.ExpiresAt.IsZero() && s.defaultTTL > 0 {
 		msg.ExpiresAt = msg.CreatedAt.Add(s.defaultTTL)
+	}
+
+	// Check if queue is full
+	if len(queue) >= s.maxPerClient {
+		if s.tierConfig == nil {
+			s.queues[clientID] = queue
+			return fmt.Errorf("offline queue full for client %s (limit: %d)", clientID, s.maxPerClient)
+		}
+		// Try to evict lower priority (oldest first)
+		evicted := false
+		for p := int(PriorityLow); p >= int(msg.Priority); p-- {
+			for i, m := range queue {
+				if int(m.Priority) == p {
+					priorityName := "low"
+					if m.Priority == PriorityMedium {
+						priorityName = "medium"
+					} else if m.Priority == PriorityHigh {
+						priorityName = "high"
+					}
+					metrics.OfflineMessageEvicted(priorityName)
+					queue = append(queue[:i], queue[i+1:]...)
+					evicted = true
+					break
+				}
+			}
+			if evicted {
+				break
+			}
+		}
+		if !evicted {
+			s.queues[clientID] = queue
+			return fmt.Errorf("offline queue full for client %s (limit: %d)", clientID, s.maxPerClient)
+		}
 	}
 
 	s.queues[clientID] = append(queue, msg)

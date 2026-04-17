@@ -48,6 +48,18 @@ type Config struct {
 
 	// Path to TLS private key file (PEM). Required if TLSAddr is set.
 	TLSKeyFile string
+
+	// Rate limiting configuration
+	RateLimit RateLimitConfig
+
+	// Circuit breaker configuration
+	CircuitBreaker CircuitBreakerConfig
+
+	// Offline message tiering
+	OfflineTier OfflineTierConfig
+
+	// Maximum inflight messages per client for flow control (default: 65535)
+	MaxInflight uint16
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -80,6 +92,46 @@ type ClusterConfig struct {
 	ReplicaCount int
 }
 
+// RateLimitConfig holds rate limiting settings.
+type RateLimitConfig struct {
+	Enabled          bool    `json:"enabled"`
+	ClientMsgRate    float64 `json:"client_msg_rate"`
+	ClientMsgBurst   int     `json:"client_msg_burst"`
+	ConnectRate      float64 `json:"connect_rate"`
+	ConnectBurst     int     `json:"connect_burst"`
+	GlobalMsgRate    float64 `json:"global_msg_rate"`
+	GlobalMsgBurst   int     `json:"global_msg_burst"`
+	MaxMessageSize   int     `json:"max_message_size"`
+
+	BackpressureEnabled  bool `json:"backpressure_enabled"`
+	BackpressureQueueMax int  `json:"backpressure_queue_max"`
+
+	AdaptiveEnabled bool `json:"adaptive_enabled"`
+
+	DetectorEnabled        bool    `json:"detector_enabled"`
+	DetectorHighRate       float64 `json:"detector_high_rate"`
+	DetectorScoreThreshold float64 `json:"detector_score_threshold"`
+}
+
+// CircuitBreakerConfig holds circuit breaker settings.
+type CircuitBreakerConfig struct {
+	Enabled        bool    `json:"enabled"`
+	ErrorThreshold float64 `json:"error_threshold"`
+	WindowSizeMs   int     `json:"window_size_ms"`
+	OpenDurationMs int     `json:"open_duration_ms"`
+	HalfOpenMax    int     `json:"half_open_max"`
+}
+
+// OfflineTierConfig holds per-priority offline message settings.
+type OfflineTierConfig struct {
+	HighMax int           `json:"high_max"`
+	HighTTL time.Duration `json:"high_ttl"`
+	MidMax  int           `json:"mid_max"`
+	MidTTL  time.Duration `json:"mid_ttl"`
+	LowMax  int           `json:"low_max"`
+	LowTTL  time.Duration `json:"low_ttl"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -101,5 +153,37 @@ func DefaultConfig() *Config {
 		},
 		LogLevel: "info",
 		HTTPAddr: ":9090",
+		RateLimit: RateLimitConfig{
+			Enabled:              false,
+			ClientMsgRate:        100,
+			ClientMsgBurst:       200,
+			ConnectRate:          1000,
+			ConnectBurst:         2000,
+			GlobalMsgRate:        10_000_000,
+			GlobalMsgBurst:       20_000_000,
+			MaxMessageSize:       256 * 1024,
+			BackpressureEnabled:  false,
+			BackpressureQueueMax: 100_000,
+			AdaptiveEnabled:      false,
+			DetectorEnabled:      false,
+			DetectorHighRate:     10_000,
+			DetectorScoreThreshold: 80,
+		},
+		CircuitBreaker: CircuitBreakerConfig{
+			Enabled:        false,
+			ErrorThreshold: 0.1,
+			WindowSizeMs:   5000,
+			OpenDurationMs: 30000,
+			HalfOpenMax:    5,
+		},
+		OfflineTier: OfflineTierConfig{
+			HighMax: 1000,
+			HighTTL: 7 * 24 * time.Hour,
+			MidMax:  500,
+			MidTTL:  3 * 24 * time.Hour,
+			LowMax:  100,
+			LowTTL:  24 * time.Hour,
+		},
+		MaxInflight: 65535,
 	}
 }

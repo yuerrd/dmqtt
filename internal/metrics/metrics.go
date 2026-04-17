@@ -77,6 +77,23 @@ var (
 		Name: "dmqtt_offline_messages_evicted_total",
 		Help: "Total offline messages evicted by priority.",
 	}, []string{"priority"})
+	migrationTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_migration_total",
+		Help: "Total migration tasks by status.",
+	}, []string{"status"})
+	migrationDevicesTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_migration_devices_total",
+		Help: "Total devices migrated.",
+	})
+	migrationDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "dmqtt_migration_duration_seconds",
+		Help:    "Migration task duration in seconds.",
+		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+	})
+	migrationActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "dmqtt_migration_active",
+		Help: "Currently active migrations.",
+	})
 )
 
 func init() {
@@ -98,6 +115,10 @@ func init() {
 		backpressureLevel,
 		circuitBreakerState,
 		offlineEvicted,
+		migrationTotal,
+		migrationDevicesTotal,
+		migrationDuration,
+		migrationActive,
 	)
 }
 
@@ -200,4 +221,20 @@ func collect(provider StatsProvider) {
 	SetSubscriptions(provider.ActiveSubscriptions())
 	SetRetainedMessages(provider.RetainedMessageCount())
 	SetClusterNodes(provider.ClusterNodeCount())
+}
+
+func MigrationTotal(status string) {
+	migrationTotal.WithLabelValues(status).Inc()
+}
+
+func MigrationDevicesTotal(n int) {
+	migrationDevicesTotal.Add(float64(n))
+}
+
+func MigrationDuration(seconds float64) {
+	migrationDuration.Observe(seconds)
+}
+
+func SetMigrationActive(n int) {
+	migrationActive.Set(float64(n))
 }

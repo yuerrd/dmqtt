@@ -153,3 +153,23 @@ func TestSetCircuitBreakerState(t *testing.T) {
 func TestOfflineMessageEvicted(t *testing.T) {
 	OfflineMessageEvicted("low")
 }
+
+func TestMigrationTotal(t *testing.T) {
+	MigrationTotal("completed")
+	// No panic = pass
+}
+
+func TestMigrationDevicesTotal(t *testing.T) {
+	MigrationDevicesTotal(5)
+	// No panic = pass
+}
+
+func TestMigrationDuration(t *testing.T) {
+	MigrationDuration(2.5)
+	// No panic = pass
+}
+
+func TestSetMigrationActive(t *testing.T) {
+	SetMigrationActive(3)
+	// No panic = pass
+}

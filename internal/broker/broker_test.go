@@ -843,7 +843,7 @@ func TestKeepAliveTimeout_TriggersWill(t *testing.T) {
 
 func TestBroker_RateLimitRejectsPublish(t *testing.T) {
 	b := New(":0", nil)
-	
+
 	// Set up rate limiter that allows 1 msg then rejects
 	cfg := ratelimit.DefaultConfig()
 	cfg.Enabled = true
@@ -851,7 +851,7 @@ func TestBroker_RateLimitRejectsPublish(t *testing.T) {
 	cfg.Client.MsgBurst = 1
 	rl := ratelimit.NewAggregateRateLimiter(cfg)
 	b.SetRateLimiter(rl)
-	
+
 	go b.Start()
 	defer b.Stop()
 	waitForBroker(t, b)

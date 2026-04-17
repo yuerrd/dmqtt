@@ -94,14 +94,14 @@ type ClusterConfig struct {
 
 // RateLimitConfig holds rate limiting settings.
 type RateLimitConfig struct {
-	Enabled          bool    `json:"enabled"`
-	ClientMsgRate    float64 `json:"client_msg_rate"`
-	ClientMsgBurst   int     `json:"client_msg_burst"`
-	ConnectRate      float64 `json:"connect_rate"`
-	ConnectBurst     int     `json:"connect_burst"`
-	GlobalMsgRate    float64 `json:"global_msg_rate"`
-	GlobalMsgBurst   int     `json:"global_msg_burst"`
-	MaxMessageSize   int     `json:"max_message_size"`
+	Enabled        bool    `json:"enabled"`
+	ClientMsgRate  float64 `json:"client_msg_rate"`
+	ClientMsgBurst int     `json:"client_msg_burst"`
+	ConnectRate    float64 `json:"connect_rate"`
+	ConnectBurst   int     `json:"connect_burst"`
+	GlobalMsgRate  float64 `json:"global_msg_rate"`
+	GlobalMsgBurst int     `json:"global_msg_burst"`
+	MaxMessageSize int     `json:"max_message_size"`
 
 	BackpressureEnabled  bool `json:"backpressure_enabled"`
 	BackpressureQueueMax int  `json:"backpressure_queue_max"`
@@ -154,19 +154,19 @@ func DefaultConfig() *Config {
 		LogLevel: "info",
 		HTTPAddr: ":9090",
 		RateLimit: RateLimitConfig{
-			Enabled:              false,
-			ClientMsgRate:        100,
-			ClientMsgBurst:       200,
-			ConnectRate:          1000,
-			ConnectBurst:         2000,
-			GlobalMsgRate:        10_000_000,
-			GlobalMsgBurst:       20_000_000,
-			MaxMessageSize:       256 * 1024,
-			BackpressureEnabled:  false,
-			BackpressureQueueMax: 100_000,
-			AdaptiveEnabled:      false,
-			DetectorEnabled:      false,
-			DetectorHighRate:     10_000,
+			Enabled:                false,
+			ClientMsgRate:          100,
+			ClientMsgBurst:         200,
+			ConnectRate:            1000,
+			ConnectBurst:           2000,
+			GlobalMsgRate:          10_000_000,
+			GlobalMsgBurst:         20_000_000,
+			MaxMessageSize:         256 * 1024,
+			BackpressureEnabled:    false,
+			BackpressureQueueMax:   100_000,
+			AdaptiveEnabled:        false,
+			DetectorEnabled:        false,
+			DetectorHighRate:       10_000,
 			DetectorScoreThreshold: 80,
 		},
 		CircuitBreaker: CircuitBreakerConfig{

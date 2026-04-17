@@ -94,6 +94,27 @@ var (
 		Name: "dmqtt_migration_active",
 		Help: "Currently active migrations.",
 	})
+	interceptorDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "dmqtt_interceptor_duration_seconds",
+		Help:    "Interceptor execution duration in seconds.",
+		Buckets: prometheus.ExponentialBuckets(0.001, 2, 10),
+	}, []string{"name", "hook"})
+	interceptorErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_interceptor_errors_total",
+		Help: "Total interceptor errors.",
+	}, []string{"name", "hook"})
+	interceptorSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_interceptor_skipped_total",
+		Help: "Total interceptor calls skipped due to circuit breaker.",
+	}, []string{"name"})
+	auditEntries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "dmqtt_audit_entries_total",
+		Help: "Total audit entries recorded.",
+	}, []string{"action"})
+	auditDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "dmqtt_audit_dropped_total",
+		Help: "Total audit entries dropped.",
+	})
 )
 
 func init() {
@@ -119,6 +140,11 @@ func init() {
 		migrationDevicesTotal,
 		migrationDuration,
 		migrationActive,
+		interceptorDuration,
+		interceptorErrors,
+		interceptorSkipped,
+		auditEntries,
+		auditDropped,
 	)
 }
 
@@ -237,4 +263,24 @@ func MigrationDuration(seconds float64) {
 
 func SetMigrationActive(n int) {
 	migrationActive.Set(float64(n))
+}
+
+func InterceptorDuration(name, hook string, seconds float64) {
+	interceptorDuration.WithLabelValues(name, hook).Observe(seconds)
+}
+
+func InterceptorError(name, hook string) {
+	interceptorErrors.WithLabelValues(name, hook).Inc()
+}
+
+func InterceptorSkipped(name string) {
+	interceptorSkipped.WithLabelValues(name).Inc()
+}
+
+func AuditEntry(action string) {
+	auditEntries.WithLabelValues(action).Inc()
+}
+
+func AuditDropped() {
+	auditDropped.Inc()
 }

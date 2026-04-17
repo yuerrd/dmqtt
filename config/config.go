@@ -69,6 +69,9 @@ type Config struct {
 
 	// Rule engine configuration
 	RuleEngine RuleEngineConfig
+
+	// Tenant configuration
+	Tenant TenantConfig
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -165,6 +168,12 @@ type RuleEngineConfig struct {
 	WebhookTimeout time.Duration `json:"webhook_timeout"`
 }
 
+// TenantConfig holds multi-tenancy configuration.
+type TenantConfig struct {
+	Enabled     bool   `json:"enabled"`
+	TenantsFile string `json:"tenants_file"`
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -233,6 +242,9 @@ func DefaultConfig() *Config {
 			Enabled:        false,
 			WorkerPoolSize: 64,
 			WebhookTimeout: 5 * time.Second,
+		},
+		Tenant: TenantConfig{
+			Enabled: false,
 		},
 	}
 }

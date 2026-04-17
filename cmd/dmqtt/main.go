@@ -20,6 +20,7 @@ import (
 	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/rule"
 	"github.com/langzp/dmqtt/internal/storage"
+	"github.com/langzp/dmqtt/internal/tenant"
 	"github.com/langzp/dmqtt/internal/transport"
 )
 
@@ -53,6 +54,14 @@ func main() {
 		slog.Info("running without authentication")
 	}
 
+	// Determine tenant resolver
+	var tenantResolver tenant.TenantResolver
+	if cs, ok := authn.(*auth.CredentialStore); ok {
+		tenantResolver = cs
+	} else if noop, ok := authn.(*auth.NoopAuth); ok {
+		tenantResolver = noop
+	}
+
 	var store storage.Store
 	if cfg.DataDir != "" {
 		var err error
@@ -72,6 +81,23 @@ func main() {
 
 	// Interceptor chain
 	chain := plugin.NewInterceptorChain()
+	var tenantManager *tenant.TenantManager
+	if cfg.Tenant.Enabled {
+		tenantManager = tenant.NewManager()
+		if cfg.Tenant.TenantsFile != "" {
+			if err := tenantManager.LoadTenants(cfg.Tenant.TenantsFile); err != nil {
+				slog.Error("failed to load tenants", "error", err)
+				os.Exit(1)
+			}
+		}
+		if tenantResolver != nil {
+			tenantInterceptor := tenant.NewInterceptor(tenantManager, tenantResolver)
+			chain.Register(tenantInterceptor, plugin.WithTimeout(50*time.Millisecond))
+			slog.Info("tenant interceptor enabled", "tenants", tenantManager.TenantCount())
+		} else {
+			slog.Warn("tenant enabled but no resolver available")
+		}
+	}
 	if cfg.Audit.Enabled {
 		auditInterceptor := audit.New(audit.Config{
 			BufferSize: cfg.Audit.BufferSize,
@@ -257,6 +283,14 @@ func main() {
 					slog.Error("failed to reload rules", "error", err)
 				} else {
 					slog.Info("rules reloaded", "rules", ruleEngine.RuleCount())
+				}
+			}
+			if tenantManager != nil && cfg.Tenant.TenantsFile != "" {
+				slog.Info("SIGHUP received, reloading tenants", "file", cfg.Tenant.TenantsFile)
+				if err := tenantManager.LoadTenants(cfg.Tenant.TenantsFile); err != nil {
+					slog.Error("failed to reload tenants", "error", err)
+				} else {
+					slog.Info("tenants reloaded", "tenants", tenantManager.TenantCount())
 				}
 			}
 			continue

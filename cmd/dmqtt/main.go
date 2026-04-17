@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/langzp/dmqtt/config"
 	"github.com/langzp/dmqtt/internal/auth"
@@ -14,6 +15,7 @@ import (
 	"github.com/langzp/dmqtt/internal/httpapi"
 	"github.com/langzp/dmqtt/internal/logging"
 	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/langzp/dmqtt/internal/ratelimit"
 	"github.com/langzp/dmqtt/internal/storage"
 	"github.com/langzp/dmqtt/internal/transport"
 )
@@ -64,6 +66,57 @@ func main() {
 
 	b := broker.New(cfg.TCPAddr, store)
 	b.SetAuth(authn, authz)
+
+	// Rate limiting
+	if cfg.RateLimit.Enabled {
+		rlCfg := &ratelimit.Config{
+			Enabled: true,
+			Global: ratelimit.GlobalConfig{
+				IngressRate:  cfg.RateLimit.GlobalMsgRate,
+				IngressBurst: cfg.RateLimit.GlobalMsgBurst,
+				ConnectRate:  cfg.RateLimit.ConnectRate,
+				ConnectBurst: cfg.RateLimit.ConnectBurst,
+			},
+			Client: ratelimit.ClientConfig{
+				MsgRate:         cfg.RateLimit.ClientMsgRate,
+				MsgBurst:        cfg.RateLimit.ClientMsgBurst,
+				BlacklistTTL:    60 * time.Second,
+				CleanupInterval: 5 * time.Minute,
+			},
+			Topic: ratelimit.TopicConfig{
+				TopicConfigs: make(map[string]ratelimit.TopicLimitEntry),
+			},
+			Backpressure: ratelimit.BackpressureConfig{
+				Enabled:           cfg.RateLimit.BackpressureEnabled,
+				QueueSizeMax:      cfg.RateLimit.BackpressureQueueMax,
+				CriticalThreshold: 0.9,
+				SevereThreshold:   0.7,
+				ModerateThreshold: 0.5,
+				CheckInterval:     time.Second,
+			},
+			Adaptive: ratelimit.AdaptiveConfig{
+				Enabled:       cfg.RateLimit.AdaptiveEnabled,
+				CheckInterval: 5 * time.Second,
+				HighLoad:      0.9,
+				MediumLoad:    0.7,
+				LowLoad:       0.3,
+			},
+			Detector: ratelimit.DetectorConfig{
+				Enabled:            cfg.RateLimit.DetectorEnabled,
+				HighRateThreshold:  cfg.RateLimit.DetectorHighRate,
+				ScoreThreshold:     cfg.RateLimit.DetectorScoreThreshold,
+				ScanThreshold:      100,
+				ReconnectThreshold: 20,
+				DecayInterval:      5 * time.Minute,
+			},
+			MaxMessageSize: cfg.RateLimit.MaxMessageSize,
+		}
+		b.SetRateLimiter(ratelimit.NewAggregateRateLimiter(rlCfg))
+		slog.Info("rate limiting enabled",
+			"clientRate", cfg.RateLimit.ClientMsgRate,
+			"connectRate", cfg.RateLimit.ConnectRate,
+		)
+	}
 
 	if cfg.Cluster.Enabled {
 		clusterCfg := cluster.ClusterConfig{

@@ -27,6 +27,7 @@ import (
 
 func main() {
 	cfg := config.DefaultConfig()
+	applyEnvOverrides(cfg)
 
 	logging.Init(cfg.LogLevel)
 

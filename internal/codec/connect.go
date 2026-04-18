@@ -35,6 +35,9 @@ type ConnectPacket struct {
 	PasswordFlag bool
 	Username     string
 	Password     []byte
+
+	Properties     *Properties // v5.0 CONNECT properties
+	WillProperties *Properties // v5.0 Will properties
 }
 
 // DecodeConnectPacket decodes the variable header and payload of a CONNECT packet.
@@ -62,6 +65,10 @@ func DecodeConnectPacket(data []byte) (*ConnectPacket, error) {
 	pkt.ProtocolLevel = data[offset]
 	offset++
 
+	if pkt.ProtocolLevel != 4 && pkt.ProtocolLevel != 5 {
+		return nil, &ErrMalformedPacket{Reason: fmt.Sprintf("unsupported protocol level %d", pkt.ProtocolLevel)}
+	}
+
 	// Connect Flags
 	if offset >= len(data) {
 		return nil, &ErrMalformedPacket{Reason: "missing connect flags"}
@@ -83,6 +90,21 @@ func DecodeConnectPacket(data []byte) (*ConnectPacket, error) {
 	pkt.KeepAlive = binary.BigEndian.Uint16(data[offset : offset+2])
 	offset += 2
 
+	// v5: decode Connect Properties
+	if pkt.ProtocolLevel == 5 {
+		propLen, n, err := decodeVarInt(data, offset)
+		if err != nil {
+			return nil, fmt.Errorf("reading connect properties length: %w", err)
+		}
+		offset += n
+		props, err := DecodeProperties(data[offset:], propLen)
+		if err != nil {
+			return nil, fmt.Errorf("decoding connect properties: %w", err)
+		}
+		pkt.Properties = props
+		offset += propLen
+	}
+
 	// Payload: Client ID
 	clientID, n, err := readUTF8String(data, offset)
 	if err != nil {
@@ -93,6 +115,21 @@ func DecodeConnectPacket(data []byte) (*ConnectPacket, error) {
 
 	// Will Topic and Will Message
 	if pkt.WillFlag {
+		// v5: decode Will Properties before will topic/payload
+		if pkt.ProtocolLevel == 5 {
+			propLen, n, err := decodeVarInt(data, offset)
+			if err != nil {
+				return nil, fmt.Errorf("reading will properties length: %w", err)
+			}
+			offset += n
+			willProps, err := DecodeProperties(data[offset:], propLen)
+			if err != nil {
+				return nil, fmt.Errorf("decoding will properties: %w", err)
+			}
+			pkt.WillProperties = willProps
+			offset += propLen
+		}
+
 		willTopic, n, err := readUTF8String(data, offset)
 		if err != nil {
 			return nil, fmt.Errorf("reading will topic: %w", err)
@@ -133,12 +170,30 @@ func DecodeConnectPacket(data []byte) (*ConnectPacket, error) {
 
 // ConnackPacket represents an MQTT CONNACK packet.
 type ConnackPacket struct {
-	SessionPresent bool
-	ReturnCode     byte
+	SessionPresent  bool
+	ReturnCode      byte
+	ReasonCode      byte
+	Properties      *Properties
+	ProtocolVersion byte
 }
 
 // Encode serializes the CONNACK packet to bytes (including fixed header).
 func (p *ConnackPacket) Encode() []byte {
+	if p.ProtocolVersion == 5 {
+		var sp byte
+		if p.SessionPresent {
+			sp = 0x01
+		}
+		propsData := p.Properties.Encode()
+		remaining := 2 + len(propsData)
+		fh := FixedHeader{PacketType: CONNACK, RemainingLength: remaining}
+		buf := fh.Encode()
+		buf = append(buf, sp, p.ReasonCode)
+		buf = append(buf, propsData...)
+		return buf
+	}
+
+	// v3.1.1
 	fh := FixedHeader{
 		PacketType:      CONNACK,
 		RemainingLength: 2,

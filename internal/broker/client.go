@@ -15,14 +15,15 @@ import (
 
 // Client represents a connected MQTT client.
 type Client struct {
-	conn      net.Conn
-	broker    *Broker
-	clientID  string
-	username  string
-	will      *WillMessage
-	packetIDs *PacketIDAllocator
-	inflight  *InflightStore
-	keepAlive time.Duration
+	conn            net.Conn
+	broker          *Broker
+	clientID        string
+	username        string
+	will            *WillMessage
+	packetIDs       *PacketIDAllocator
+	inflight        *InflightStore
+	keepAlive       time.Duration
+	protocolVersion byte
 
 	mu     sync.Mutex
 	closed bool
@@ -121,6 +122,7 @@ func (c *Client) handleConnect() error {
 	c.username = pkt.Username
 
 	c.clientID = pkt.ClientID
+	c.protocolVersion = pkt.ProtocolLevel
 
 	if pkt.KeepAlive > 0 {
 		c.keepAlive = time.Duration(float64(pkt.KeepAlive)*1.5) * time.Second
@@ -309,7 +311,7 @@ func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
 }
 
 func (c *Client) handleSubscribe(data []byte) {
-	pkt, err := codec.DecodeSubscribePacket(data)
+	pkt, err := codec.DecodeSubscribePacket(data, c.protocolVersion)
 	if err != nil {
 		slog.Error("decode SUBSCRIBE error", "client", c.clientID, "error", err)
 		return
@@ -391,7 +393,7 @@ func (c *Client) handleSubscribe(data []byte) {
 }
 
 func (c *Client) handleUnsubscribe(data []byte) {
-	pkt, err := codec.DecodeUnsubscribePacket(data)
+	pkt, err := codec.DecodeUnsubscribePacket(data, c.protocolVersion)
 	if err != nil {
 		slog.Error("decode UNSUBSCRIBE error", "client", c.clientID, "error", err)
 		return

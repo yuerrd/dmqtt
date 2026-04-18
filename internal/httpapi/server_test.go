@@ -180,6 +180,255 @@ func (m *mockBrokerAPI) RetainedMessageCount() int     { return 5 }
 func (m *mockBrokerAPI) ClusterNodeCount() int         { return 3 }
 func (m *mockBrokerAPI) DisconnectDevice(id string)    {}
 
+func newTestMock() *mockBrokerAPI {
+	return &mockBrokerAPI{
+		clientIDs: []string{"dev-a", "dev-b", "dev-c"},
+		clientInfos: map[string]*broker.ClientInfo{
+			"dev-a": {
+				ClientID:        "dev-a",
+				Username:        "user1",
+				RemoteAddr:      "10.0.0.1:5000",
+				ProtocolVersion: 4,
+				ConnectedAt:     time.Date(2026, 4, 18, 10, 0, 0, 0, time.UTC),
+				KeepAlive:       60 * time.Second,
+			},
+			"dev-b": {
+				ClientID:        "dev-b",
+				Username:        "user2",
+				RemoteAddr:      "10.0.0.2:5001",
+				ProtocolVersion: 5,
+				ConnectedAt:     time.Date(2026, 4, 18, 11, 0, 0, 0, time.UTC),
+				KeepAlive:       120 * time.Second,
+			},
+			"dev-c": {
+				ClientID:        "dev-c",
+				Username:        "",
+				RemoteAddr:      "10.0.0.3:5002",
+				ProtocolVersion: 4,
+				ConnectedAt:     time.Date(2026, 4, 18, 12, 0, 0, 0, time.UTC),
+				KeepAlive:       0,
+			},
+		},
+		sessionData: map[string]*cluster.MigrateSessionData{
+			"dev-a": {
+				ClientID:       "dev-a",
+				CleanStart:     false,
+				ExpiryInterval: 3600,
+				Subscriptions:  map[string]byte{"sensor/#": 1},
+			},
+		},
+	}
+}
+
+func TestDevicesList(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	total := int(body["total"].(float64))
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	devices := body["devices"].([]interface{})
+	if len(devices) != 3 {
+		t.Errorf("devices count = %d, want 3", len(devices))
+	}
+}
+
+func TestDevicesList_Pagination(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices?page=1&per_page=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	devices := body["devices"].([]interface{})
+	if len(devices) != 2 {
+		t.Errorf("page 1 devices = %d, want 2", len(devices))
+	}
+	if int(body["total"].(float64)) != 3 {
+		t.Errorf("total = %v, want 3", body["total"])
+	}
+
+	// Page 2
+	resp2, err := http.Get("http://" + srv.Addr() + "/api/v1/devices?page=2&per_page=2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+
+	var body2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&body2)
+	devices2 := body2["devices"].([]interface{})
+	if len(devices2) != 1 {
+		t.Errorf("page 2 devices = %d, want 1", len(devices2))
+	}
+}
+
+func TestDeviceDetail(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices/dev-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["client_id"] != "dev-a" {
+		t.Errorf("client_id = %v, want dev-a", body["client_id"])
+	}
+	if body["connected"] != true {
+		t.Error("connected should be true")
+	}
+	if body["username"] != "user1" {
+		t.Errorf("username = %v, want user1", body["username"])
+	}
+	sess := body["session"].(map[string]interface{})
+	if sess == nil {
+		t.Fatal("session is nil")
+	}
+	subs := sess["subscriptions"].(map[string]interface{})
+	if subs["sensor/#"] == nil {
+		t.Error("missing subscription sensor/#")
+	}
+}
+
+func TestDeviceDetail_NotFound(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices/unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDeviceDetail_NoSession(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	// dev-b has no session data
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices/dev-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["client_id"] != "dev-b" {
+		t.Errorf("client_id = %v, want dev-b", body["client_id"])
+	}
+	if body["session"] != nil {
+		t.Error("expected no session for dev-b")
+	}
+}
+
+func TestDeviceDisconnect(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("POST", "http://"+srv.Addr()+"/api/v1/devices/dev-a/disconnect", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["status"] != "disconnected" {
+		t.Errorf("status = %v, want disconnected", body["status"])
+	}
+}
+
+func TestDeviceDisconnect_NotFound(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("POST", "http://"+srv.Addr()+"/api/v1/devices/unknown/disconnect", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 404 {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestStatsEndpoint(t *testing.T) {
 	mock := &mockBrokerAPI{clientIDs: []string{"c1", "c2"}}
 	srv := New(":0", nil)

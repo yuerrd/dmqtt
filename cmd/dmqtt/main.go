@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,11 @@ func main() {
 	// Validate TLS config
 	if cfg.TLSAddr != "" && (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") {
 		slog.Error("TLSAddr requires TLSCertFile and TLSKeyFile")
+		os.Exit(1)
+	}
+
+	if cfg.WSSAddr != "" && (cfg.TLSCertFile == "" || cfg.TLSKeyFile == "") {
+		slog.Error("WSSAddr requires TLSCertFile and TLSKeyFile")
 		os.Exit(1)
 	}
 
@@ -263,6 +269,34 @@ func main() {
 		}
 		listeners = append(listeners, tlsLn)
 		slog.Info("TLS listener enabled", "addr", tlsLn.Addr())
+	}
+
+	if cfg.WSAddr != "" {
+		wsLn, err := transport.NewWSListener(cfg.WSAddr, nil)
+		if err != nil {
+			slog.Error("failed to create WebSocket listener", "addr", cfg.WSAddr, "error", err)
+			os.Exit(1)
+		}
+		listeners = append(listeners, wsLn)
+		slog.Info("WebSocket listener enabled", "addr", wsLn.Addr())
+	}
+
+	if cfg.WSSAddr != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertFile, cfg.TLSKeyFile)
+		if err != nil {
+			slog.Error("failed to load TLS cert for WSS", "error", err)
+			os.Exit(1)
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		wssLn, err := transport.NewWSListener(cfg.WSSAddr, tlsCfg)
+		if err != nil {
+			slog.Error("failed to create WSS listener", "addr", cfg.WSSAddr, "error", err)
+			os.Exit(1)
+		}
+		listeners = append(listeners, wssLn)
+		slog.Info("WSS listener enabled", "addr", wssLn.Addr())
 	}
 
 	// Start broker with all listeners

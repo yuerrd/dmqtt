@@ -49,6 +49,13 @@ type Config struct {
 	// Path to TLS private key file (PEM). Required if TLSAddr is set.
 	TLSKeyFile string
 
+	// WebSocket listener address (e.g., ":8080"). Empty = disabled.
+	WSAddr string
+
+	// WebSocket over TLS listener address (e.g., ":8443"). Empty = disabled.
+	// Requires TLSCertFile and TLSKeyFile to be set.
+	WSSAddr string
+
 	// Rate limiting configuration
 	RateLimit RateLimitConfig
 

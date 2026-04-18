@@ -237,8 +237,12 @@ func main() {
 	}
 
 	httpSrv := httpapi.New(cfg.HTTPAddr, b)
-	if cfg.Cluster.Enabled && b.Cluster() != nil && b.Cluster().Coordinator() != nil {
-		httpSrv.SetMigrationCoordinator(b.Cluster().Coordinator())
+	httpSrv.SetBrokerAPI(b)
+	if cfg.Cluster.Enabled && b.Cluster() != nil {
+		httpSrv.SetClusterAPI(b.Cluster())
+		if b.Cluster().Coordinator() != nil {
+			httpSrv.SetMigrationCoordinator(b.Cluster().Coordinator())
+		}
 	}
 	if err := httpSrv.Start(); err != nil {
 		slog.Error("failed to start HTTP API", "addr", cfg.HTTPAddr, "error", err)

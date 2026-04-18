@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dmqtt-pdb
+  namespace: dmqtt
+  labels:
+    app.kubernetes.io/name: dmqtt
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dmqtt

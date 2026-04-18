@@ -1,4 +1,4 @@
-.PHONY: build bench example-plugin test lint clean run install
+.PHONY: build bench example-plugin test lint clean run install docker-build
 
 BINARY=dmqtt
 BUILD_DIR=bin
@@ -30,3 +30,6 @@ run: build
 install: build
 	@echo "Installing DMQTT to /opt/dmqtt..."
 	sudo ./deploy/bare-metal/install.sh
+
+docker-build:
+	docker build -f deploy/k8s/Dockerfile -t dmqtt:latest .

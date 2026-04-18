@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/broker"
 	"github.com/langzp/dmqtt/internal/cluster"
 )
 
@@ -151,6 +152,91 @@ func TestMetricsEndpoint(t *testing.T) {
 
 	if ct := resp.Header.Get("Content-Type"); ct == "" {
 		t.Error("Content-Type header missing")
+	}
+}
+
+type mockBrokerAPI struct {
+	clientIDs   []string
+	clientInfos map[string]*broker.ClientInfo
+	sessionData map[string]*cluster.MigrateSessionData
+}
+
+func (m *mockBrokerAPI) ConnectedClientIDs() []string         { return m.clientIDs }
+func (m *mockBrokerAPI) GetClientInfo(id string) *broker.ClientInfo {
+	if m.clientInfos != nil {
+		return m.clientInfos[id]
+	}
+	return nil
+}
+func (m *mockBrokerAPI) GetSessionData(id string) *cluster.MigrateSessionData {
+	if m.sessionData != nil {
+		return m.sessionData[id]
+	}
+	return nil
+}
+func (m *mockBrokerAPI) ClientCount() int              { return len(m.clientIDs) }
+func (m *mockBrokerAPI) ActiveSubscriptions() int      { return 42 }
+func (m *mockBrokerAPI) RetainedMessageCount() int     { return 5 }
+func (m *mockBrokerAPI) ClusterNodeCount() int         { return 3 }
+func (m *mockBrokerAPI) DisconnectDevice(id string)    {}
+
+func TestStatsEndpoint(t *testing.T) {
+	mock := &mockBrokerAPI{clientIDs: []string{"c1", "c2"}}
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]float64
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["connected_clients"] != 2 {
+		t.Errorf("connected_clients = %v, want 2", body["connected_clients"])
+	}
+	if body["active_subscriptions"] != 42 {
+		t.Errorf("active_subscriptions = %v, want 42", body["active_subscriptions"])
+	}
+	if body["retained_messages"] != 5 {
+		t.Errorf("retained_messages = %v, want 5", body["retained_messages"])
+	}
+	if body["cluster_nodes"] != 3 {
+		t.Errorf("cluster_nodes = %v, want 3", body["cluster_nodes"])
+	}
+}
+
+func TestNodesEndpoint_NoClusters(t *testing.T) {
+	srv := New(":0", nil)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	nodes := body["nodes"].([]interface{})
+	if len(nodes) != 0 {
+		t.Errorf("nodes = %d, want 0", len(nodes))
 	}
 }
 

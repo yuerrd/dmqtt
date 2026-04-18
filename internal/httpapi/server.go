@@ -6,9 +6,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/langzp/dmqtt/internal/broker"
 	"github.com/langzp/dmqtt/internal/cluster"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -18,12 +21,32 @@ type ReadinessChecker interface {
 	IsReady() bool
 }
 
+// BrokerAPI provides device and stats data.
+type BrokerAPI interface {
+	ConnectedClientIDs() []string
+	GetClientInfo(clientID string) *broker.ClientInfo
+	GetSessionData(clientID string) *cluster.MigrateSessionData
+	ClientCount() int
+	ActiveSubscriptions() int
+	RetainedMessageCount() int
+	ClusterNodeCount() int
+	DisconnectDevice(deviceID string)
+}
+
+// ClusterAPI provides cluster node information.
+type ClusterAPI interface {
+	Self() cluster.NodeInfo
+	Members() []cluster.NodeInfo
+}
+
 // Server serves HTTP endpoints for observability.
 type Server struct {
 	httpServer  *http.Server
 	checker     ReadinessChecker
 	listener    net.Listener
 	coordinator *cluster.MigrationCoordinator
+	brokerAPI   BrokerAPI
+	clusterAPI  ClusterAPI
 }
 
 // New creates a new HTTP API server.
@@ -36,6 +59,10 @@ func New(addr string, checker ReadinessChecker) *Server {
 	mux.HandleFunc("/ready", s.handleReady)
 	mux.HandleFunc("/api/v1/cluster/migrations", s.handleMigrations)
 	mux.HandleFunc("/api/v1/cluster/migrations/", s.handleMigrationByID)
+	mux.HandleFunc("/api/v1/devices", s.handleDevices)
+	mux.HandleFunc("/api/v1/devices/", s.handleDeviceByID)
+	mux.HandleFunc("/api/v1/stats", s.handleStats)
+	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -100,6 +127,16 @@ func (s *Server) SetMigrationCoordinator(coord *cluster.MigrationCoordinator) {
 	s.coordinator = coord
 }
 
+// SetBrokerAPI sets the broker API for device management endpoints.
+func (s *Server) SetBrokerAPI(api BrokerAPI) {
+	s.brokerAPI = api
+}
+
+// SetClusterAPI sets the cluster API for node information endpoints.
+func (s *Server) SetClusterAPI(api ClusterAPI) {
+	s.clusterAPI = api
+}
+
 func (s *Server) handleMigrations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.coordinator == nil {
@@ -155,4 +192,181 @@ func (s *Server) handleMigrationByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.brokerAPI == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		return
+	}
+	stats := map[string]int{
+		"connected_clients":    s.brokerAPI.ClientCount(),
+		"active_subscriptions": s.brokerAPI.ActiveSubscriptions(),
+		"retained_messages":    s.brokerAPI.RetainedMessageCount(),
+		"cluster_nodes":        s.brokerAPI.ClusterNodeCount(),
+	}
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	type nodesResponse struct {
+		Nodes []cluster.NodeInfo `json:"nodes"`
+		Self  string             `json:"self"`
+	}
+	resp := nodesResponse{Nodes: []cluster.NodeInfo{}}
+	if s.clusterAPI != nil {
+		resp.Self = s.clusterAPI.Self().ID
+		resp.Nodes = s.clusterAPI.Members()
+	}
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.brokerAPI == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		return
+	}
+
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 {
+		perPage = 20
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+
+	ids := s.brokerAPI.ConnectedClientIDs()
+	sort.Strings(ids)
+	total := len(ids)
+
+	start := (page - 1) * perPage
+	if start > total {
+		start = total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	pageIDs := ids[start:end]
+
+	type deviceSummary struct {
+		ClientID        string `json:"client_id"`
+		Username        string `json:"username"`
+		RemoteAddr      string `json:"remote_addr"`
+		ProtocolVersion byte   `json:"protocol_version"`
+		ConnectedAt     string `json:"connected_at"`
+		KeepAlive       int    `json:"keep_alive"`
+	}
+
+	devices := make([]deviceSummary, 0, len(pageIDs))
+	for _, id := range pageIDs {
+		info := s.brokerAPI.GetClientInfo(id)
+		if info == nil {
+			continue
+		}
+		devices = append(devices, deviceSummary{
+			ClientID:        info.ClientID,
+			Username:        info.Username,
+			RemoteAddr:      info.RemoteAddr,
+			ProtocolVersion: info.ProtocolVersion,
+			ConnectedAt:     info.ConnectedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			KeepAlive:       int(info.KeepAlive.Seconds()),
+		})
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"devices":  devices,
+		"total":    total,
+		"page":     page,
+		"per_page": perPage,
+	})
+}
+
+func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.brokerAPI == nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/devices/")
+	parts := strings.SplitN(path, "/", 2)
+	deviceID := parts[0]
+
+	if deviceID == "" {
+		s.handleDevices(w, r)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "disconnect" && r.Method == http.MethodPost {
+		info := s.brokerAPI.GetClientInfo(deviceID)
+		if info == nil {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
+			return
+		}
+		s.brokerAPI.DisconnectDevice(deviceID)
+		json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	info := s.brokerAPI.GetClientInfo(deviceID)
+	if info == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
+		return
+	}
+
+	type sessionInfo struct {
+		CleanStart     bool            `json:"clean_start"`
+		ExpiryInterval uint32          `json:"expiry_interval"`
+		Subscriptions  map[string]byte `json:"subscriptions"`
+	}
+
+	type deviceDetail struct {
+		ClientID        string       `json:"client_id"`
+		Username        string       `json:"username"`
+		RemoteAddr      string       `json:"remote_addr"`
+		ProtocolVersion byte         `json:"protocol_version"`
+		ConnectedAt     string       `json:"connected_at"`
+		KeepAlive       int          `json:"keep_alive"`
+		Connected       bool         `json:"connected"`
+		Session         *sessionInfo `json:"session,omitempty"`
+	}
+
+	detail := deviceDetail{
+		ClientID:        info.ClientID,
+		Username:        info.Username,
+		RemoteAddr:      info.RemoteAddr,
+		ProtocolVersion: info.ProtocolVersion,
+		ConnectedAt:     info.ConnectedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		KeepAlive:       int(info.KeepAlive.Seconds()),
+		Connected:       true,
+	}
+
+	sess := s.brokerAPI.GetSessionData(deviceID)
+	if sess != nil {
+		detail.Session = &sessionInfo{
+			CleanStart:     sess.CleanStart,
+			ExpiryInterval: sess.ExpiryInterval,
+			Subscriptions:  sess.Subscriptions,
+		}
+	}
+
+	json.NewEncoder(w).Encode(detail)
 }

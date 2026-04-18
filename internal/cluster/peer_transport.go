@@ -29,6 +29,16 @@ const (
 	MsgForwardAck  MessageType = "forward_ack"
 	MsgMigrateData MessageType = "migrate_data"
 	MsgMigrateAck  MessageType = "migrate_ack"
+
+	MsgReplicateOffline    MessageType = "replicate_offline"
+	MsgReplicateOfflineAck MessageType = "replicate_offline_ack"
+	MsgFetchOffline        MessageType = "fetch_offline"
+	MsgFetchOfflineResp    MessageType = "fetch_offline_resp"
+	MsgReplicateWill       MessageType = "replicate_will"
+	MsgReplicateWillAck    MessageType = "replicate_will_ack"
+	MsgDeleteWill          MessageType = "delete_will"
+	MsgSessionTakeover     MessageType = "session_takeover"
+	MsgSessionTakeoverAck  MessageType = "session_takeover_ack"
 )
 
 // ForwardMessage is sent between nodes to forward a published message.
@@ -78,6 +88,116 @@ type MigrateAckMessage struct {
 	Success  bool        `json:"success"`
 }
 
+// ReplicateOfflineEntry is a single offline message in replication data.
+type ReplicateOfflineEntry struct {
+	Topic     string `json:"topic"`
+	Payload   []byte `json:"payload"`
+	QoS       byte   `json:"qos"`
+	Priority  int    `json:"priority"`
+	CreatedAt int64  `json:"created_at"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+// ReplicateOfflineMessage replicates offline messages to a peer node.
+type ReplicateOfflineMessage struct {
+	Type     MessageType             `json:"type"`
+	ClientID string                  `json:"client_id"`
+	Messages []ReplicateOfflineEntry `json:"messages"`
+}
+
+// ReplicateOfflineAckMessage acknowledges receipt of replicated offline messages.
+type ReplicateOfflineAckMessage struct {
+	Type     MessageType `json:"type"`
+	ClientID string      `json:"client_id"`
+	Success  bool        `json:"success"`
+}
+
+// FetchOfflineMessage requests offline messages for a client.
+type FetchOfflineMessage struct {
+	Type     MessageType `json:"type"`
+	ClientID string      `json:"client_id"`
+}
+
+// FetchOfflineRespMessage returns offline messages for a client.
+type FetchOfflineRespMessage struct {
+	Type     MessageType             `json:"type"`
+	ClientID string                  `json:"client_id"`
+	Messages []ReplicateOfflineEntry `json:"messages"`
+}
+
+// ReplicateWillMessage replicates a will message to a peer node.
+type ReplicateWillMessage struct {
+	Type        MessageType `json:"type"`
+	ClientID    string      `json:"client_id"`
+	Topic       string      `json:"topic"`
+	Payload     []byte      `json:"payload"`
+	QoS         byte        `json:"qos"`
+	Retain      bool        `json:"retain"`
+	PersistedAt int64       `json:"persisted_at"`
+}
+
+// ReplicateWillAckMessage acknowledges receipt of a replicated will message.
+type ReplicateWillAckMessage struct {
+	Type     MessageType `json:"type"`
+	ClientID string      `json:"client_id"`
+	Success  bool        `json:"success"`
+}
+
+// DeleteWillMessage requests deletion of a will message on a peer node.
+type DeleteWillMessage struct {
+	Type     MessageType `json:"type"`
+	ClientID string      `json:"client_id"`
+}
+
+// TakeoverRequest requests session takeover of a client.
+type TakeoverRequest struct {
+	Type             MessageType `json:"type"`
+	ClientID         string      `json:"client_id"`
+	RequestNodeID    string      `json:"request_node_id"`
+	ConnectTimestamp int64       `json:"connect_timestamp"`
+	Epoch            uint64      `json:"epoch"`
+}
+
+// TakeoverResponse responds to a session takeover request.
+type TakeoverResponse struct {
+	Type    MessageType `json:"type"`
+	Success bool        `json:"success"`
+	Reason  string      `json:"reason"`
+}
+
+// HandlerRegistry provides a thread-safe registry for dynamic message handlers.
+type HandlerRegistry struct {
+	mu       sync.RWMutex
+	handlers map[MessageType]func([]byte)
+}
+
+// NewHandlerRegistry creates a new HandlerRegistry.
+func NewHandlerRegistry() *HandlerRegistry {
+	return &HandlerRegistry{
+		handlers: make(map[MessageType]func([]byte)),
+	}
+}
+
+// Register adds a handler for a given message type.
+func (r *HandlerRegistry) Register(msgType MessageType, fn func([]byte)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.handlers[msgType] = fn
+}
+
+// Dispatch invokes the registered handler for the given message type.
+// Returns true if a handler was found, false otherwise.
+func (r *HandlerRegistry) Dispatch(msgType MessageType, data []byte) bool {
+	r.mu.RLock()
+	fn, ok := r.handlers[msgType]
+	r.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	fn(data)
+	return true
+}
+
 // PeerTransport manages persistent QUIC connections between cluster nodes.
 type PeerTransport struct {
 	listenAddr   string
@@ -100,6 +220,8 @@ type PeerTransport struct {
 	cbConfig *circuitbreaker.Config
 
 	migrateHandler func(MigrateDataMessage)
+
+	registry *HandlerRegistry
 }
 
 type peerConn struct {
@@ -167,6 +289,7 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 		peers:        make(map[string]*peerConn),
 		done:         make(chan struct{}),
 		ackWaiters:   make(map[uint64]chan struct{}),
+		registry:     NewHandlerRegistry(),
 	}
 
 	go pt.acceptLoop()
@@ -176,6 +299,54 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 // SetMigrateHandler sets the callback for incoming migration data.
 func (pt *PeerTransport) SetMigrateHandler(fn func(MigrateDataMessage)) {
 	pt.migrateHandler = fn
+}
+
+// RegisterHandler registers a dynamic handler for a given message type.
+func (pt *PeerTransport) RegisterHandler(msgType MessageType, fn func([]byte)) {
+	pt.registry.Register(msgType, fn)
+}
+
+// SendRaw marshals msg to JSON and sends it to the given peer.
+func (pt *PeerTransport) SendRaw(nodeID string, msg interface{}) error {
+	pt.mu.RLock()
+	pc, ok := pt.peers[nodeID]
+	pt.mu.RUnlock()
+
+	if !ok {
+		return fmt.Errorf("peer %s not found", nodeID)
+	}
+
+	// Circuit breaker check
+	if pc.breaker != nil {
+		if err := pc.breaker.AllowOrError(); err != nil {
+			return err
+		}
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal raw message: %w", err)
+	}
+
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	if pc.stream == nil {
+		if pc.breaker != nil {
+			pc.breaker.RecordFailure()
+		}
+		return fmt.Errorf("peer %s not connected", nodeID)
+	}
+
+	err = writeFrame(pc.stream, data)
+	if pc.breaker != nil {
+		if err != nil {
+			pc.breaker.RecordFailure()
+		} else {
+			pc.breaker.RecordSuccess()
+		}
+	}
+	return err
 }
 
 func (pt *PeerTransport) acceptLoop() {
@@ -291,7 +462,9 @@ func (pt *PeerTransport) handleConn(conn io.ReadWriteCloser) {
 			}
 			pt.ackMu.Unlock()
 		default:
-			slog.Warn("peer transport: unknown message type", "type", peek.Type)
+			if !pt.registry.Dispatch(peek.Type, data) {
+				slog.Warn("peer transport: unknown message type", "type", peek.Type)
+			}
 		}
 	}
 }

@@ -59,6 +59,8 @@ func (ws *WillStore) Set(clientID string, will *WillMessage) {
 	if err := ws.store.Set([]byte("wm/"+clientID), data); err != nil {
 		slog.Error("failed to persist will", "client", clientID, "error", err)
 	}
+	// Clear any stale published marker from previous session
+	_ = ws.store.Delete([]byte("wm-published/" + clientID))
 }
 
 func (ws *WillStore) Get(clientID string) *WillMessage {
@@ -75,6 +77,8 @@ func (ws *WillStore) Delete(clientID string) {
 	if err := ws.store.Delete([]byte("wm/" + clientID)); err != nil {
 		slog.Error("failed to delete will", "client", clientID, "error", err)
 	}
+	// Clear published marker
+	_ = ws.store.Delete([]byte("wm-published/" + clientID))
 }
 
 func (ws *WillStore) All() map[string]*WillMessage {

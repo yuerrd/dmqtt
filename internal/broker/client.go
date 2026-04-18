@@ -91,9 +91,15 @@ func (c *Client) serve() {
 					// Keep will — client wants it published
 				} else {
 					c.will = nil
+					if c.broker.willStore != nil {
+						c.broker.willStore.Delete(c.clientID)
+					}
 				}
 			} else {
 				c.will = nil
+				if c.broker.willStore != nil {
+					c.broker.willStore.Delete(c.clientID)
+				}
 			}
 			return
 		default:
@@ -180,6 +186,10 @@ func (c *Client) handleConnect() error {
 			Payload: pkt.WillPayload,
 			QoS:     pkt.WillQoS,
 			Retain:  pkt.WillRetain,
+		}
+		if c.broker.willStore != nil {
+			willCopy := *c.will
+			c.broker.willStore.Set(c.clientID, &willCopy)
 		}
 	}
 
@@ -521,6 +531,9 @@ func (c *Client) close() {
 				c.broker.retainStore.Set(c.will.Topic, c.will.Payload, c.will.QoS)
 			}
 			c.broker.routeMessage(c.will.Topic, c.will.Payload, c.will.QoS, false, false)
+			if c.broker.willStore != nil {
+				c.broker.willStore.Delete(c.clientID)
+			}
 		}
 
 		session := c.broker.sessions.Get(c.clientID)
@@ -534,7 +547,12 @@ func (c *Client) close() {
 			}
 			c.broker.subscriptions.RemoveAll(c.clientID)
 			c.broker.sessions.Remove(c.clientID)
-			c.broker.offlineStore.RemoveAll(c.clientID)
+			select {
+			case <-c.broker.done:
+				// Broker shutting down; skip storage access
+			default:
+				c.broker.offlineStore.RemoveAll(c.clientID)
+			}
 		} else if session != nil {
 			select {
 			case <-c.broker.done:

@@ -80,6 +80,9 @@ type Config struct {
 	// Tenant configuration
 	Tenant TenantConfig
 
+	// Replication configuration
+	Replication ReplicationConfig
+
 	// External plugin entries
 	Plugins []PluginEntry
 }
@@ -184,6 +187,14 @@ type TenantConfig struct {
 	TenantsFile string `json:"tenants_file"`
 }
 
+// ReplicationConfig controls offline/will message replication and session takeover.
+type ReplicationConfig struct {
+	Enabled           bool `json:"enabled"`
+	ReplicaCount      int  `json:"replica_count"`
+	SyncQoS2          bool `json:"sync_qos2"`
+	TakeoverTimeoutMs int  `json:"takeover_timeout_ms"`
+}
+
 // PluginEntry describes an external interceptor plugin to load.
 type PluginEntry struct {
 	Path   string            `json:"path"`   // Absolute path to .so file
@@ -261,6 +272,12 @@ func DefaultConfig() *Config {
 		},
 		Tenant: TenantConfig{
 			Enabled: false,
+		},
+		Replication: ReplicationConfig{
+			Enabled:           false,
+			ReplicaCount:      2,
+			SyncQoS2:          true,
+			TakeoverTimeoutMs: 2000,
 		},
 	}
 }

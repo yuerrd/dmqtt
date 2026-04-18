@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,6 +27,7 @@ type Broker struct {
 	retainStore   *RetainStore
 	dedupStore    *DedupStore
 	offlineStore  *OfflineStore
+	willStore     *WillStore
 	store         storage.Store
 	cluster       *cluster.Cluster
 	authenticator auth.Authenticator
@@ -44,7 +46,7 @@ type Broker struct {
 
 func New(addr string, store storage.Store) *Broker {
 	noop := &auth.NoopAuth{}
-	return &Broker{
+	b := &Broker{
 		addr:          addr,
 		subscriptions: NewSubscriptionIndex(),
 		sessions:      NewSessionStore(store),
@@ -59,6 +61,10 @@ func New(addr string, store storage.Store) *Broker {
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
 	}
+	if store != nil {
+		b.willStore = NewWillStore(store)
+	}
+	return b
 }
 
 func (b *Broker) loadFromStorage() error {
@@ -67,6 +73,17 @@ func (b *Broker) loadFromStorage() error {
 	}
 	if err := b.retainStore.Load(); err != nil {
 		return fmt.Errorf("loading retained messages: %w", err)
+	}
+	if b.willStore != nil {
+		if err := b.willStore.Load(); err != nil {
+			return fmt.Errorf("loading will messages: %w", err)
+		}
+	}
+	if b.store != nil {
+		b.offlineStore.SetStore(b.store)
+		if err := b.offlineStore.LoadFromStore(); err != nil {
+			return fmt.Errorf("loading offline messages: %w", err)
+		}
 	}
 	// Restore subscriptions from loaded sessions
 	b.sessions.mu.RLock()
@@ -186,6 +203,102 @@ func (b *Broker) SetCluster(c *cluster.Cluster) {
 		})
 		c.SetLocalDevicesProvider(func() []string {
 			return b.ConnectedClientIDs()
+		})
+
+		// Register will publisher for node-leave events
+		c.SetWillPublisher(func(clientID string) {
+			if b.willStore == nil {
+				return
+			}
+			will := b.willStore.Get(clientID)
+			if will == nil {
+				return
+			}
+			if b.willStore.IsPublished(clientID) {
+				return
+			}
+			b.willStore.MarkPublished(clientID)
+			if will.Retain {
+				b.retainStore.Set(will.Topic, will.Payload, will.QoS)
+			}
+			b.routeMessage(will.Topic, will.Payload, will.QoS, false, false)
+			b.willStore.Delete(clientID)
+			slog.Info("published will for dead node device", "client", clientID, "topic", will.Topic)
+		})
+
+		// Register replication message handlers
+		c.Transport().RegisterHandler(cluster.MsgReplicateWill, func(data []byte) {
+			var msg cluster.ReplicateWillMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				slog.Error("unmarshal replicate will", "error", err)
+				return
+			}
+			if b.willStore != nil {
+				b.willStore.Set(msg.ClientID, &WillMessage{
+					Topic:       msg.Topic,
+					Payload:     msg.Payload,
+					QoS:         msg.QoS,
+					Retain:      msg.Retain,
+					PersistedAt: msg.PersistedAt,
+				})
+			}
+		})
+
+		c.Transport().RegisterHandler(cluster.MsgDeleteWill, func(data []byte) {
+			var msg cluster.DeleteWillMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				slog.Error("unmarshal delete will", "error", err)
+				return
+			}
+			if b.willStore != nil {
+				b.willStore.Delete(msg.ClientID)
+			}
+		})
+
+		c.Transport().RegisterHandler(cluster.MsgReplicateOffline, func(data []byte) {
+			var msg cluster.ReplicateOfflineMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				slog.Error("unmarshal replicate offline", "error", err)
+				return
+			}
+			for _, entry := range msg.Messages {
+				if err := b.offlineStore.Enqueue(msg.ClientID, &OfflineMessage{
+					Topic:     entry.Topic,
+					Payload:   entry.Payload,
+					QoS:       entry.QoS,
+					Priority:  byte(entry.Priority),
+					CreatedAt: time.Unix(0, entry.CreatedAt),
+					ExpiresAt: time.Unix(0, entry.ExpiresAt),
+				}); err != nil {
+					slog.Warn("replicate offline enqueue failed", "client", msg.ClientID, "error", err)
+				}
+			}
+		})
+
+		c.Transport().RegisterHandler(cluster.MsgReplicateOfflineAck, func(data []byte) {
+			var msg cluster.ReplicateOfflineAckMessage
+			if err := json.Unmarshal(data, &msg); err != nil {
+				slog.Error("unmarshal replicate offline ack", "error", err)
+				return
+			}
+			b.offlineStore.RemoveAll(msg.ClientID)
+		})
+
+		c.Transport().RegisterHandler(cluster.MsgSessionTakeover, func(data []byte) {
+			var req cluster.TakeoverRequest
+			if err := json.Unmarshal(data, &req); err != nil {
+				slog.Error("unmarshal takeover request", "error", err)
+				return
+			}
+			if c.TakeoverManager() != nil {
+				c.TakeoverManager().HandleTakeoverRequest(req)
+			}
+		})
+
+		c.Transport().RegisterHandler(cluster.MsgSessionTakeoverAck, func(data []byte) {
+			if c.TakeoverManager() != nil {
+				c.TakeoverManager().HandleTakeoverResponse(data)
+			}
 		})
 	}
 }

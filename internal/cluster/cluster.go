@@ -53,6 +53,10 @@ type Cluster struct {
 	localDevicesProvider func() []string
 	onRemoteConnect      func(deviceID, nodeID string)
 
+	replicator      *Replicator
+	takeoverManager *TakeoverManager
+	willPublisher   func(clientID string)
+
 	coordinator     *MigrationCoordinator
 	executor        *MigrationExecutor
 	brokerAPI       MigrationBrokerAPI
@@ -168,6 +172,13 @@ func (c *Cluster) eventLoop() {
 			case NodeLeave:
 				slog.Info("cluster: node left", "node", ev.Node.ID)
 				c.transport.RemovePeer(ev.Node.ID)
+
+				// Publish will messages for devices that were on the dead node
+				if c.willPublisher != nil {
+					deadNodeDevices := c.connections.NodeDevices(ev.Node.ID)
+					go c.publishWillsForDeadNode(deadNodeDevices)
+				}
+
 				c.remoteSubs.RemoveNode(ev.Node.ID)
 				c.connections.RemoveNode(ev.Node.ID)
 			case NodeUpdate:
@@ -421,4 +432,58 @@ func (c *Cluster) SetRemoteConnectHandler(fn func(deviceID, nodeID string)) {
 // SetLocalDevicesProvider sets a function that returns locally connected device IDs.
 func (c *Cluster) SetLocalDevicesProvider(fn func() []string) {
 	c.localDevicesProvider = fn
+}
+
+// SetReplicator sets the replicator for offline/will replication.
+func (c *Cluster) SetReplicator(r *Replicator) {
+	c.replicator = r
+}
+
+// Replicator returns the replicator, or nil.
+func (c *Cluster) Replicator() *Replicator {
+	return c.replicator
+}
+
+// SetTakeoverManager sets the takeover manager for session takeover.
+func (c *Cluster) SetTakeoverManager(tm *TakeoverManager) {
+	c.takeoverManager = tm
+}
+
+// TakeoverManager returns the takeover manager, or nil.
+func (c *Cluster) TakeoverManager() *TakeoverManager {
+	return c.takeoverManager
+}
+
+// Transport returns the PeerTransport.
+func (c *Cluster) Transport() *PeerTransport {
+	return c.transport
+}
+
+// Ring returns the hash ring.
+func (c *Cluster) Ring() *Ring {
+	return c.ring
+}
+
+// SelfID returns this node's ID.
+func (c *Cluster) SelfID() string {
+	return c.self.ID
+}
+
+// ReplicaCount returns the configured replica count.
+func (c *Cluster) ReplicaCount() int {
+	return c.config.ReplicaCount
+}
+
+// SetWillPublisher sets the callback for publishing will messages on node death.
+func (c *Cluster) SetWillPublisher(fn func(clientID string)) {
+	c.willPublisher = fn
+}
+
+func (c *Cluster) publishWillsForDeadNode(deviceIDs []string) {
+	if c.willPublisher == nil {
+		return
+	}
+	for _, deviceID := range deviceIDs {
+		c.willPublisher(deviceID)
+	}
 }

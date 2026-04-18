@@ -8,24 +8,29 @@ type SessionMeta struct {
 	NodeID           string `json:"nodeID"`
 }
 
-// ConflictResolver decides which session wins in a conflict.
+// ConflictResolver determines session conflict outcomes.
+// Resolve returns true if remote wins (local should yield).
 type ConflictResolver interface {
-	Resolve(local, remote *SessionMeta) *SessionMeta
+	Resolve(local, remote *SessionMeta) bool
 }
 
 // LWWResolver implements Last-Writer-Wins: higher Epoch wins,
 // then newer ConnectTimestamp, then local wins on tie.
 type LWWResolver struct{}
 
-func (r *LWWResolver) Resolve(local, remote *SessionMeta) *SessionMeta {
+func (r *LWWResolver) Resolve(local, remote *SessionMeta) bool {
 	if remote.Epoch > local.Epoch {
-		return remote
+		return true
 	}
-	if local.Epoch > remote.Epoch {
-		return local
+	if remote.Epoch < local.Epoch {
+		return false
 	}
 	if remote.ConnectTimestamp > local.ConnectTimestamp {
-		return remote
+		return true
 	}
-	return local
+	if remote.ConnectTimestamp < local.ConnectTimestamp {
+		return false
+	}
+	// Same epoch and timestamp: local wins (returns false = remote does NOT win)
+	return false
 }

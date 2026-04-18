@@ -161,7 +161,7 @@ type TakeoverRequest struct {
 // TakeoverResponse responds to a session takeover request.
 type TakeoverResponse struct {
 	Type     MessageType `json:"type"`
-	ClientID string      `json:"clientID"`
+	ClientID string      `json:"client_id"`
 	Success  bool        `json:"success"`
 	Reason   string      `json:"reason,omitempty"`
 }

@@ -62,6 +62,9 @@ func (tm *TakeoverManager) RequestTakeover(clientID, targetNodeID string, epoch 
 
 	respCh := make(chan TakeoverResponse, 1)
 	tm.ackMu.Lock()
+	if oldCh, exists := tm.ackChans[clientID]; exists {
+		close(oldCh)
+	}
 	tm.ackChans[clientID] = respCh
 	tm.ackMu.Unlock()
 
@@ -77,7 +80,11 @@ func (tm *TakeoverManager) RequestTakeover(clientID, targetNodeID string, epoch 
 	}
 
 	select {
-	case resp := <-respCh:
+	case resp, ok := <-respCh:
+		if !ok {
+			// Channel closed by a newer RequestTakeover — treat as takeover success
+			return true
+		}
 		return resp.Success
 	case <-time.After(tm.timeout):
 		slog.Warn("takeover timeout, assuming dead node", "client", clientID, "target", targetNodeID)
@@ -86,30 +93,32 @@ func (tm *TakeoverManager) RequestTakeover(clientID, targetNodeID string, epoch 
 }
 
 func (tm *TakeoverManager) HandleTakeoverRequest(req TakeoverRequest) {
-	tm.mu.RLock()
-	localMeta, exists := tm.sessions[req.ClientID]
-	tm.mu.RUnlock()
-
 	remoteMeta := &SessionMeta{
-		ClientID:         req.ClientID,
-		Epoch:            req.Epoch,
+		ClientID:        req.ClientID,
+		Epoch:           req.Epoch,
 		ConnectTimestamp: req.ConnectTimestamp,
-		NodeID:           req.RequestNodeID,
+		NodeID:          req.RequestNodeID,
 	}
 
-	shouldYield := false
-	if !exists {
-		shouldYield = true
-	} else {
-		winner := tm.resolver.Resolve(localMeta, remoteMeta)
-		shouldYield = (winner == remoteMeta)
+	tm.mu.Lock()
+	localMeta, exists := tm.sessions[req.ClientID]
+
+	shouldYield := !exists || tm.resolver.Resolve(localMeta, remoteMeta)
+
+	if shouldYield && exists {
+		delete(tm.sessions, req.ClientID)
 	}
+	tm.mu.Unlock()
 
 	if shouldYield {
-		tm.disconnector.DisconnectDevice(req.ClientID)
-		tm.RemoveLocalSession(req.ClientID)
-
-		resp := TakeoverResponse{Type: MsgSessionTakeoverAck, ClientID: req.ClientID, Success: true}
+		if exists {
+			tm.disconnector.DisconnectDevice(req.ClientID)
+		}
+		resp := TakeoverResponse{
+			Type:     MsgSessionTakeoverAck,
+			ClientID: req.ClientID,
+			Success:  true,
+		}
 		if err := tm.transport.SendRaw(req.RequestNodeID, resp); err != nil {
 			slog.Warn("takeover ACK failed", "client", req.ClientID, "target", req.RequestNodeID, "error", err)
 		}
@@ -118,7 +127,7 @@ func (tm *TakeoverManager) HandleTakeoverRequest(req TakeoverRequest) {
 			Type:     MsgSessionTakeoverAck,
 			ClientID: req.ClientID,
 			Success:  false,
-			Reason:   "local session has higher epoch",
+			Reason:   "local session wins conflict resolution",
 		}
 		if err := tm.transport.SendRaw(req.RequestNodeID, resp); err != nil {
 			slog.Warn("takeover NACK failed", "client", req.ClientID, "target", req.RequestNodeID, "error", err)

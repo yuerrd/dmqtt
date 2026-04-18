@@ -2,44 +2,37 @@ package cluster
 
 import (
 	"testing"
-	"time"
 )
 
 func TestLWWResolver_HigherEpochWins(t *testing.T) {
 	r := &LWWResolver{}
-	now := time.Now().UnixNano()
+	local := &SessionMeta{ClientID: "c1", Epoch: 1, ConnectTimestamp: 100}
+	remote := &SessionMeta{ClientID: "c1", Epoch: 2, ConnectTimestamp: 50}
 
-	local := &SessionMeta{ClientID: "c1", Epoch: 3, ConnectTimestamp: now}
-	remote := &SessionMeta{ClientID: "c1", Epoch: 5, ConnectTimestamp: now - 1000}
-
-	winner := r.Resolve(local, remote)
-	if winner != remote {
-		t.Error("higher Epoch should win, regardless of timestamp")
+	remoteWins := r.Resolve(local, remote)
+	if !remoteWins {
+		t.Fatalf("expected remote to win (higher epoch), got local wins")
 	}
 }
 
 func TestLWWResolver_SameEpoch_NewerTimestampWins(t *testing.T) {
 	r := &LWWResolver{}
-	now := time.Now().UnixNano()
+	local := &SessionMeta{ClientID: "c1", Epoch: 1, ConnectTimestamp: 100}
+	remote := &SessionMeta{ClientID: "c1", Epoch: 1, ConnectTimestamp: 200}
 
-	local := &SessionMeta{ClientID: "c1", Epoch: 5, ConnectTimestamp: now - 1000}
-	remote := &SessionMeta{ClientID: "c1", Epoch: 5, ConnectTimestamp: now}
-
-	winner := r.Resolve(local, remote)
-	if winner != remote {
-		t.Error("same Epoch, newer timestamp should win")
+	remoteWins := r.Resolve(local, remote)
+	if !remoteWins {
+		t.Fatalf("expected remote to win (newer timestamp), got local wins")
 	}
 }
 
 func TestLWWResolver_SameEpochAndTimestamp_LocalWins(t *testing.T) {
 	r := &LWWResolver{}
-	now := time.Now().UnixNano()
+	local := &SessionMeta{ClientID: "c1", Epoch: 1, ConnectTimestamp: 100}
+	remote := &SessionMeta{ClientID: "c1", Epoch: 1, ConnectTimestamp: 100}
 
-	local := &SessionMeta{ClientID: "c1", Epoch: 5, ConnectTimestamp: now}
-	remote := &SessionMeta{ClientID: "c1", Epoch: 5, ConnectTimestamp: now}
-
-	winner := r.Resolve(local, remote)
-	if winner != local {
-		t.Error("tie should favor local")
+	remoteWins := r.Resolve(local, remote)
+	if remoteWins {
+		t.Fatalf("expected local to win on tie, got remote wins")
 	}
 }

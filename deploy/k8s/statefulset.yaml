@@ -21,6 +21,7 @@ spec:
       initContainers:
       - name: cluster-init
         image: dmqtt:latest
+        imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c"]
         args:
         - |
@@ -45,6 +46,7 @@ spec:
       containers:
       - name: dmqtt
         image: dmqtt:latest
+        imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c"]
         args:
         - |
@@ -60,8 +62,14 @@ spec:
           containerPort: 1883
         - name: http
           containerPort: 9090
-        - name: gossip
+        - name: gossip-tcp
           containerPort: 7000
+          protocol: TCP
+        - name: gossip-udp
+          containerPort: 7000
+          protocol: UDP
+        - name: transport
+          containerPort: 8000
         resources:
           requests:
             cpu: 500m
@@ -71,13 +79,13 @@ spec:
             memory: 2Gi
         livenessProbe:
           httpGet:
-            path: /healthz
+            path: /health
             port: http
           initialDelaySeconds: 10
           periodSeconds: 15
         readinessProbe:
           httpGet:
-            path: /readyz
+            path: /ready
             port: http
           initialDelaySeconds: 5
           periodSeconds: 5

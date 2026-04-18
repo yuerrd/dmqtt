@@ -16,5 +16,5 @@ RUN useradd -r -s /usr/sbin/nologin dmqtt && \
     mkdir -p /data/dmqtt && \
     chown dmqtt:dmqtt /data/dmqtt
 USER dmqtt
-EXPOSE 1883 9090 7000
+EXPOSE 1883 9090 7000 8000
 ENTRYPOINT ["dmqtt"]

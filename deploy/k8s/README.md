@@ -100,7 +100,7 @@ The HTTP API is exposed via ClusterIP service `dmqtt-http:9090`:
 kubectl -n dmqtt port-forward svc/dmqtt-http 9090:9090
 
 # Check health
-curl http://localhost:9090/healthz
+curl http://localhost:9090/health
 
 # View metrics
 curl http://localhost:9090/metrics

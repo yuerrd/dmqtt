@@ -160,9 +160,10 @@ type TakeoverRequest struct {
 
 // TakeoverResponse responds to a session takeover request.
 type TakeoverResponse struct {
-	Type    MessageType `json:"type"`
-	Success bool        `json:"success"`
-	Reason  string      `json:"reason"`
+	Type     MessageType `json:"type"`
+	ClientID string      `json:"clientID"`
+	Success  bool        `json:"success"`
+	Reason   string      `json:"reason,omitempty"`
 }
 
 // HandlerRegistry provides a thread-safe registry for dynamic message handlers.

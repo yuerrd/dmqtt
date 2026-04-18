@@ -12,11 +12,14 @@ import (
 
 // Session stores per-client state.
 type Session struct {
-	ClientID       string          `json:"clientID"`
-	CleanStart     bool            `json:"cleanStart"`
-	ExpiryInterval uint32          `json:"expiryInterval"`
-	Subscriptions  map[string]byte `json:"subscriptions"`
-	DisconnectedAt *time.Time      `json:"disconnectedAt,omitempty"`
+	ClientID         string          `json:"clientID"`
+	CleanStart       bool            `json:"cleanStart"`
+	ExpiryInterval   uint32          `json:"expiryInterval"`
+	Subscriptions    map[string]byte `json:"subscriptions"`
+	DisconnectedAt   *time.Time      `json:"disconnectedAt,omitempty"`
+	Epoch            uint64          `json:"epoch"`
+	ConnectTimestamp int64           `json:"connectTimestamp"`
+	NodeID           string          `json:"nodeID,omitempty"`
 }
 
 // SessionStore manages client sessions with optional persistence.

@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/langzp/dmqtt/config"
 )
@@ -35,5 +37,24 @@ func applyEnvOverrides(cfg *config.Config) {
 	}
 	if v := os.Getenv("DMQTT_LOG_LEVEL"); v != "" {
 		cfg.LogLevel = v
+	}
+
+	// Cluster overrides
+	if v := os.Getenv("DMQTT_CLUSTER_ENABLED"); v != "" {
+		cfg.Cluster.Enabled = strings.EqualFold(v, "true")
+	}
+	if v := os.Getenv("DMQTT_CLUSTER_NODE_ID"); v != "" {
+		cfg.Cluster.NodeID = v
+	}
+	if v := os.Getenv("DMQTT_CLUSTER_HOST"); v != "" {
+		cfg.Cluster.Host = v
+	}
+	if v := os.Getenv("DMQTT_CLUSTER_GOSSIP_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			cfg.Cluster.GossipPort = port
+		}
+	}
+	if v := os.Getenv("DMQTT_CLUSTER_SEEDS"); v != "" {
+		cfg.Cluster.Seeds = strings.Split(v, ",")
 	}
 }

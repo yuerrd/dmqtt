@@ -97,3 +97,69 @@ func TestApplyEnvOverrides_PartialOverride(t *testing.T) {
 		t.Errorf("HTTPAddr = %q, want %q (unchanged)", cfg.HTTPAddr, ":9090")
 	}
 }
+
+func TestApplyEnvOverrides_ClusterVars(t *testing.T) {
+	envs := map[string]string{
+		"DMQTT_CLUSTER_ENABLED":     "true",
+		"DMQTT_CLUSTER_NODE_ID":     "node-0",
+		"DMQTT_CLUSTER_HOST":        "10.0.0.1",
+		"DMQTT_CLUSTER_GOSSIP_PORT": "7100",
+		"DMQTT_CLUSTER_SEEDS":       "10.0.0.2:7100,10.0.0.3:7100",
+	}
+	for k, v := range envs {
+		os.Setenv(k, v)
+	}
+	defer func() {
+		for k := range envs {
+			os.Unsetenv(k)
+		}
+	}()
+
+	cfg := config.DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if !cfg.Cluster.Enabled {
+		t.Error("Cluster.Enabled = false, want true")
+	}
+	if cfg.Cluster.NodeID != "node-0" {
+		t.Errorf("Cluster.NodeID = %q, want %q", cfg.Cluster.NodeID, "node-0")
+	}
+	if cfg.Cluster.Host != "10.0.0.1" {
+		t.Errorf("Cluster.Host = %q, want %q", cfg.Cluster.Host, "10.0.0.1")
+	}
+	if cfg.Cluster.GossipPort != 7100 {
+		t.Errorf("Cluster.GossipPort = %d, want %d", cfg.Cluster.GossipPort, 7100)
+	}
+	if len(cfg.Cluster.Seeds) != 2 || cfg.Cluster.Seeds[0] != "10.0.0.2:7100" || cfg.Cluster.Seeds[1] != "10.0.0.3:7100" {
+		t.Errorf("Cluster.Seeds = %v, want [10.0.0.2:7100 10.0.0.3:7100]", cfg.Cluster.Seeds)
+	}
+}
+
+func TestApplyEnvOverrides_ClusterDefaults(t *testing.T) {
+	// No cluster env vars set — cluster config stays at defaults
+	cfg := config.DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if cfg.Cluster.Enabled {
+		t.Error("Cluster.Enabled = true, want false")
+	}
+	if cfg.Cluster.GossipPort != 7000 {
+		t.Errorf("Cluster.GossipPort = %d, want %d", cfg.Cluster.GossipPort, 7000)
+	}
+	if cfg.Cluster.Seeds != nil {
+		t.Errorf("Cluster.Seeds = %v, want nil", cfg.Cluster.Seeds)
+	}
+}
+
+func TestApplyEnvOverrides_InvalidGossipPort(t *testing.T) {
+	os.Setenv("DMQTT_CLUSTER_GOSSIP_PORT", "notanumber")
+	defer os.Unsetenv("DMQTT_CLUSTER_GOSSIP_PORT")
+
+	cfg := config.DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	// Invalid port should be ignored, keep default
+	if cfg.Cluster.GossipPort != 7000 {
+		t.Errorf("Cluster.GossipPort = %d, want %d (default)", cfg.Cluster.GossipPort, 7000)
+	}
+}

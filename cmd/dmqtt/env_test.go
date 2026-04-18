@@ -163,3 +163,38 @@ func TestApplyEnvOverrides_InvalidGossipPort(t *testing.T) {
 		t.Errorf("Cluster.GossipPort = %d, want %d (default)", cfg.Cluster.GossipPort, 7000)
 	}
 }
+
+func TestApplyEnvOverrides_ReplicationVars(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	t.Setenv("DMQTT_REPLICATION_ENABLED", "true")
+	t.Setenv("DMQTT_REPLICATION_REPLICA_COUNT", "3")
+	t.Setenv("DMQTT_REPLICATION_SYNC_QOS2", "false")
+	t.Setenv("DMQTT_REPLICATION_TAKEOVER_TIMEOUT_MS", "5000")
+	applyEnvOverrides(cfg)
+
+	if !cfg.Replication.Enabled {
+		t.Error("Replication.Enabled should be true")
+	}
+	if cfg.Replication.ReplicaCount != 3 {
+		t.Errorf("ReplicaCount = %d, want 3", cfg.Replication.ReplicaCount)
+	}
+	if cfg.Replication.SyncQoS2 {
+		t.Error("SyncQoS2 should be false")
+	}
+	if cfg.Replication.TakeoverTimeoutMs != 5000 {
+		t.Errorf("TakeoverTimeoutMs = %d, want 5000", cfg.Replication.TakeoverTimeoutMs)
+	}
+}
+
+func TestApplyEnvOverrides_ReplicationDefaults(t *testing.T) {
+	cfg := config.DefaultConfig()
+	applyEnvOverrides(cfg)
+
+	if cfg.Replication.Enabled {
+		t.Error("default Replication.Enabled should be false")
+	}
+	if cfg.Replication.ReplicaCount != 2 {
+		t.Errorf("default ReplicaCount = %d, want 2", cfg.Replication.ReplicaCount)
+	}
+}

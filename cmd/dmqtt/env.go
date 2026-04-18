@@ -57,4 +57,22 @@ func applyEnvOverrides(cfg *config.Config) {
 	if v := os.Getenv("DMQTT_CLUSTER_SEEDS"); v != "" {
 		cfg.Cluster.Seeds = strings.Split(v, ",")
 	}
+
+	// Replication variables
+	if v := os.Getenv("DMQTT_REPLICATION_ENABLED"); v != "" {
+		cfg.Replication.Enabled = (v == "true" || v == "1")
+	}
+	if v := os.Getenv("DMQTT_REPLICATION_REPLICA_COUNT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Replication.ReplicaCount = n
+		}
+	}
+	if v := os.Getenv("DMQTT_REPLICATION_SYNC_QOS2"); v != "" {
+		cfg.Replication.SyncQoS2 = (v == "true" || v == "1")
+	}
+	if v := os.Getenv("DMQTT_REPLICATION_TAKEOVER_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			cfg.Replication.TakeoverTimeoutMs = n
+		}
+	}
 }

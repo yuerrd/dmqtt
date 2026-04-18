@@ -242,6 +242,33 @@ func main() {
 			"batchSize", cfg.Migration.BatchSize,
 		)
 
+		// Replication configuration
+		if cfg.Replication.Enabled {
+			replicator := cluster.NewReplicator(
+				c.SelfID(),
+				c.Transport(),
+				c.Ring(),
+				cfg.Replication.ReplicaCount,
+			)
+			c.SetReplicator(replicator)
+
+			takeoverTimeout := time.Duration(cfg.Replication.TakeoverTimeoutMs) * time.Millisecond
+			takeoverMgr := cluster.NewTakeoverManager(
+				c.SelfID(),
+				c.Transport(),
+				b,
+				&cluster.LWWResolver{},
+				takeoverTimeout,
+			)
+			c.SetTakeoverManager(takeoverMgr)
+
+			slog.Info("replication enabled",
+				"replicas", cfg.Replication.ReplicaCount,
+				"syncQoS2", cfg.Replication.SyncQoS2,
+				"takeoverTimeout", takeoverTimeout,
+			)
+		}
+
 		defer func() {
 			slog.Info("leaving cluster")
 			c.Stop()

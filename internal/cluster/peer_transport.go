@@ -195,9 +195,15 @@ func (pt *PeerTransport) acceptLoop() {
 
 func (pt *PeerTransport) handleQUICConn(qconn *quic.Conn) {
 	defer qconn.CloseWithError(0, "done")
-	stream, err := qconn.AcceptStream(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := qconn.AcceptStream(ctx)
 	if err != nil {
-		slog.Error("peer transport accept stream error", "error", err)
+		select {
+		case <-pt.done:
+		default:
+			slog.Error("peer transport accept stream error", "error", err)
+		}
 		return
 	}
 	pt.handleConn(stream)
@@ -342,7 +348,9 @@ func (pt *PeerTransport) connectPeer(pc *peerConn) {
 			}
 		}
 
-		stream, err := qconn.OpenStreamSync(context.Background())
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+		stream, err := qconn.OpenStreamSync(ctx2)
+		cancel2()
 		if err != nil {
 			qconn.CloseWithError(0, "stream open failed")
 			select {

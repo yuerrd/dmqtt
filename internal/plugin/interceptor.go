@@ -47,7 +47,7 @@ type OnSessionExpiredInterceptor interface {
 type ConnectEvent struct {
 	ClientID     string
 	Username     string
-	CleanSession bool
+	CleanSession bool // Value means CleanStart for v5
 	RemoteAddr   string
 }
 

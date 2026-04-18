@@ -213,9 +213,10 @@ func TestPeerTransport_MigrateMessages(t *testing.T) {
 			{Topic: "test/1", Payload: []byte("hello"), QoS: 1},
 		},
 		Session: &MigrateSessionData{
-			ClientID:      "dev-1",
-			CleanSession:  false,
-			Subscriptions: map[string]byte{"test/#": 1},
+			ClientID:       "dev-1",
+			CleanStart:     false,
+			ExpiryInterval: 0xFFFFFFFF,
+			Subscriptions:  map[string]byte{"test/#": 1},
 		},
 	}
 	err = pt2.SendMigrate("node-1", migrateMsg)

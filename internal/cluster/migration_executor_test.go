@@ -64,9 +64,10 @@ func TestMigrationExecutor_ExecuteLocalMigration(t *testing.T) {
 		{Topic: "t/1", Payload: []byte("p1"), QoS: 1},
 	}
 	broker.sessions["dev-1"] = &MigrateSessionData{
-		ClientID:      "dev-1",
-		CleanSession:  false,
-		Subscriptions: map[string]byte{"t/#": 1},
+		ClientID:       "dev-1",
+		CleanStart:     false,
+		ExpiryInterval: 0xFFFFFFFF,
+		Subscriptions:  map[string]byte{"t/#": 1},
 	}
 
 	// Create two PeerTransport instances to simulate inter-node communication

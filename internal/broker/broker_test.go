@@ -902,7 +902,7 @@ func TestBroker_CircuitOpenFallsBackToOffline(t *testing.T) {
 	b := New(":0", nil)
 
 	// Register a session with subscription
-	session := b.sessions.Create("subscriber", false)
+	session := b.sessions.Create("subscriber", false, 0xFFFFFFFF)
 	session.Subscriptions["test/topic"] = 1
 	b.subscriptions.Add("subscriber", "test/topic", 1)
 
@@ -921,7 +921,7 @@ func TestBroker_MigrationBrokerAPI(t *testing.T) {
 	b := New(":0", nil)
 
 	// Create a session with subscriptions
-	session := b.sessions.Create("dev-1", false)
+	session := b.sessions.Create("dev-1", false, 0xFFFFFFFF)
 	session.Subscriptions["test/#"] = 1
 
 	// Add offline messages
@@ -976,9 +976,10 @@ func TestBroker_ImportMigrateData(t *testing.T) {
 			{Topic: "imported/1", Payload: []byte("data"), QoS: 1},
 		},
 		Session: &cluster.MigrateSessionData{
-			ClientID:      "dev-2",
-			CleanSession:  false,
-			Subscriptions: map[string]byte{"imported/#": 1},
+			ClientID:       "dev-2",
+			CleanStart:     false,
+			ExpiryInterval: 0xFFFFFFFF,
+			Subscriptions:  map[string]byte{"imported/#": 1},
 		},
 	}
 

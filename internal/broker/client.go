@@ -74,7 +74,16 @@ func (c *Client) serve() {
 		case codec.PINGREQ:
 			c.send(codec.EncodePingresp())
 		case codec.DISCONNECT:
-			c.will = nil // Clean disconnect — do not publish will
+			if c.protocolVersion == 5 && len(data) > 0 {
+				dpkt, _ := codec.DecodeDisconnectPacket(data)
+				if dpkt != nil && dpkt.ReasonCode == codec.DisconnWithWillMessage {
+					// Keep will — client wants it published
+				} else {
+					c.will = nil
+				}
+			} else {
+				c.will = nil
+			}
 			return
 		default:
 			slog.Warn("unsupported packet type", "client", c.clientID, "type", codec.PacketTypeName(fh.PacketType))
@@ -96,7 +105,7 @@ func (c *Client) handleConnect() error {
 		return fmt.Errorf("decoding CONNECT: %w", err)
 	}
 
-	if pkt.ProtocolName != "MQTT" || pkt.ProtocolLevel != 4 {
+	if pkt.ProtocolName != "MQTT" || (pkt.ProtocolLevel != 4 && pkt.ProtocolLevel != 5) {
 		connack := &codec.ConnackPacket{ReturnCode: codec.ConnackUnacceptableProtocol}
 		c.send(connack.Encode())
 		return fmt.Errorf("unsupported protocol: %s level %d", pkt.ProtocolName, pkt.ProtocolLevel)
@@ -124,6 +133,18 @@ func (c *Client) handleConnect() error {
 	c.clientID = pkt.ClientID
 	c.protocolVersion = pkt.ProtocolLevel
 
+	cleanStart := pkt.CleanSession
+	expiryInterval := uint32(0)
+	if c.protocolVersion == 4 {
+		if !pkt.CleanSession {
+			expiryInterval = 0xFFFFFFFF
+		}
+	} else {
+		if pkt.Properties != nil && pkt.Properties.SessionExpiryInterval != nil {
+			expiryInterval = *pkt.Properties.SessionExpiryInterval
+		}
+	}
+
 	if pkt.KeepAlive > 0 {
 		c.keepAlive = time.Duration(float64(pkt.KeepAlive)*1.5) * time.Second
 	}
@@ -132,8 +153,8 @@ func (c *Client) handleConnect() error {
 
 	sessionPresent := false
 	existing := c.broker.sessions.Get(c.clientID)
-	if pkt.CleanSession || existing == nil {
-		c.broker.sessions.Create(c.clientID, pkt.CleanSession)
+	if cleanStart || existing == nil {
+		c.broker.sessions.Create(c.clientID, cleanStart, expiryInterval)
 	} else {
 		sessionPresent = true
 		for filter, qos := range existing.Subscriptions {
@@ -162,7 +183,7 @@ func (c *Client) handleConnect() error {
 		evt := &plugin.ConnectEvent{
 			ClientID:     c.clientID,
 			Username:     c.username,
-			CleanSession: pkt.CleanSession,
+			CleanSession: cleanStart,
 			RemoteAddr:   c.conn.RemoteAddr().String(),
 		}
 		if err := c.broker.interceptors.OnConnect(context.Background(), evt); err != nil {
@@ -174,8 +195,10 @@ func (c *Client) handleConnect() error {
 	}
 
 	connack := &codec.ConnackPacket{
-		SessionPresent: sessionPresent,
-		ReturnCode:     codec.ConnackAccepted,
+		SessionPresent:  sessionPresent,
+		ReturnCode:      codec.ConnackAccepted,
+		ReasonCode:      codec.ReasonSuccess,
+		ProtocolVersion: c.protocolVersion,
 	}
 	c.send(connack.Encode())
 
@@ -438,6 +461,17 @@ func (c *Client) send(data []byte) {
 	c.conn.Write(data)
 }
 
+func (c *Client) sendDisconnectAndClose(reasonCode byte) {
+	if c.protocolVersion == 5 {
+		pkt := &codec.DisconnectPacket{
+			ReasonCode:      reasonCode,
+			ProtocolVersion: 5,
+		}
+		c.send(pkt.Encode())
+	}
+	c.conn.Close()
+}
+
 func (c *Client) close() {
 	c.mu.Lock()
 	if c.closed {
@@ -478,7 +512,7 @@ func (c *Client) close() {
 		}
 
 		session := c.broker.sessions.Get(c.clientID)
-		if session != nil && session.CleanSession {
+		if session != nil && session.ExpiryInterval == 0 {
 			// Broadcast unsubscribe for each filter before removing
 			if c.broker.cluster != nil {
 				filters := c.broker.subscriptions.ClientFilters(c.clientID)
@@ -489,6 +523,13 @@ func (c *Client) close() {
 			c.broker.subscriptions.RemoveAll(c.clientID)
 			c.broker.sessions.Remove(c.clientID)
 			c.broker.offlineStore.RemoveAll(c.clientID)
+		} else if session != nil {
+			select {
+			case <-c.broker.done:
+				// Broker shutting down; skip persist
+			default:
+				c.broker.sessions.MarkDisconnected(c.clientID)
+			}
 		}
 	}
 }

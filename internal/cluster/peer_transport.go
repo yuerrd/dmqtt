@@ -57,9 +57,10 @@ type MigrateOfflineMsg struct {
 
 // MigrateSessionData is session state transferred during migration.
 type MigrateSessionData struct {
-	ClientID      string          `json:"client_id"`
-	CleanSession  bool            `json:"clean_session"`
-	Subscriptions map[string]byte `json:"subscriptions"`
+	ClientID       string          `json:"client_id"`
+	CleanStart     bool            `json:"clean_start"`
+	ExpiryInterval uint32          `json:"expiry_interval"`
+	Subscriptions  map[string]byte `json:"subscriptions"`
 }
 
 // MigrateDataMessage transfers device data from source to target node.

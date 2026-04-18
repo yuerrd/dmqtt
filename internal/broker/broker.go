@@ -38,7 +38,8 @@ type Broker struct {
 	mu      sync.RWMutex
 	clients map[string]*Client
 
-	done chan struct{}
+	done   chan struct{}
+	reaper *SessionReaper
 }
 
 func New(addr string, store storage.Store) *Broker {
@@ -70,7 +71,7 @@ func (b *Broker) loadFromStorage() error {
 	// Restore subscriptions from loaded sessions
 	b.sessions.mu.RLock()
 	for clientID, session := range b.sessions.sessions {
-		if !session.CleanSession {
+		if session.ExpiryInterval != 0 {
 			for filter, qos := range session.Subscriptions {
 				b.subscriptions.Add(clientID, filter, qos)
 			}
@@ -90,6 +91,9 @@ func (b *Broker) Serve(listeners ...transport.Listener) error {
 	b.mu.Lock()
 	b.listeners = listeners
 	b.mu.Unlock()
+
+	b.reaper = NewSessionReaper(b.sessions, b.subscriptions, b.offlineStore, 60*time.Second)
+	b.reaper.Start()
 
 	for _, ln := range listeners {
 		slog.Info("DMQTT listening", "addr", ln.Addr())
@@ -137,6 +141,10 @@ func (b *Broker) Start() error {
 
 func (b *Broker) Stop() {
 	close(b.done)
+
+	if b.reaper != nil {
+		b.reaper.Stop()
+	}
 
 	b.mu.Lock()
 	listeners := b.listeners
@@ -227,7 +235,7 @@ func (b *Broker) disconnectExisting(clientID string) {
 	b.mu.Unlock()
 
 	if ok {
-		existing.conn.Close()
+		existing.sendDisconnectAndClose(0x8E) // DisconnSessionTakenOver
 	}
 }
 
@@ -265,7 +273,7 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 			}
 		} else {
 			session := b.sessions.Get(match.ClientID)
-			if session != nil && !session.CleanSession {
+			if session != nil && session.ExpiryInterval != 0 {
 				b.offlineStore.Enqueue(match.ClientID, &OfflineMessage{
 					Topic:   topic,
 					Payload: payload,
@@ -388,9 +396,10 @@ func (b *Broker) GetSessionData(clientID string) *cluster.MigrateSessionData {
 		subs[k] = v
 	}
 	return &cluster.MigrateSessionData{
-		ClientID:      session.ClientID,
-		CleanSession:  session.CleanSession,
-		Subscriptions: subs,
+		ClientID:       session.ClientID,
+		CleanStart:     session.CleanStart,
+		ExpiryInterval: session.ExpiryInterval,
+		Subscriptions:  subs,
 	}
 }
 
@@ -411,7 +420,7 @@ func (b *Broker) ImportMigrateData(msg cluster.MigrateDataMessage) {
 	}
 	// Import session
 	if msg.Session != nil {
-		session := b.sessions.Create(msg.Session.ClientID, msg.Session.CleanSession)
+		session := b.sessions.Create(msg.Session.ClientID, msg.Session.CleanStart, msg.Session.ExpiryInterval)
 		for filter, qos := range msg.Session.Subscriptions {
 			session.Subscriptions[filter] = qos
 			b.subscriptions.Add(msg.Session.ClientID, filter, qos)

@@ -5,15 +5,18 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/langzp/dmqtt/internal/storage"
 )
 
 // Session stores per-client state.
 type Session struct {
-	ClientID      string          `json:"clientID"`
-	CleanSession  bool            `json:"cleanSession"`
-	Subscriptions map[string]byte `json:"subscriptions"`
+	ClientID       string          `json:"clientID"`
+	CleanStart     bool            `json:"cleanStart"`
+	ExpiryInterval uint32          `json:"expiryInterval"`
+	Subscriptions  map[string]byte `json:"subscriptions"`
+	DisconnectedAt *time.Time      `json:"disconnectedAt,omitempty"`
 }
 
 // SessionStore manages client sessions with optional persistence.
@@ -42,10 +45,24 @@ func (ss *SessionStore) Load() error {
 			slog.Warn("skipping corrupt session", "key", string(key), "error", err)
 			return nil
 		}
-		// Extract clientID from key "s/{clientID}"
 		s.ClientID = strings.TrimPrefix(string(key), "s/")
 		if s.Subscriptions == nil {
 			s.Subscriptions = make(map[string]byte)
+		}
+		// Backwards compat: detect old format with "cleanSession" field
+		var raw map[string]interface{}
+		if json.Unmarshal(value, &raw) == nil {
+			if _, hasOld := raw["cleanSession"]; hasOld {
+				if _, hasNew := raw["cleanStart"]; !hasNew {
+					cs, _ := raw["cleanSession"].(bool)
+					s.CleanStart = cs
+					if cs {
+						s.ExpiryInterval = 0
+					} else {
+						s.ExpiryInterval = 0xFFFFFFFF
+					}
+				}
+			}
 		}
 		ss.sessions[s.ClientID] = &s
 		return nil
@@ -58,18 +75,49 @@ func (ss *SessionStore) Get(clientID string) *Session {
 	return ss.sessions[clientID]
 }
 
-func (ss *SessionStore) Create(clientID string, cleanSession bool) *Session {
+func (ss *SessionStore) Create(clientID string, cleanStart bool, expiryInterval uint32) *Session {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
 	s := &Session{
-		ClientID:      clientID,
-		CleanSession:  cleanSession,
-		Subscriptions: make(map[string]byte),
+		ClientID:       clientID,
+		CleanStart:     cleanStart,
+		ExpiryInterval: expiryInterval,
+		Subscriptions:  make(map[string]byte),
 	}
 	ss.sessions[clientID] = s
 	ss.persist(clientID, s)
 	return s
+}
+
+func (ss *SessionStore) MarkDisconnected(clientID string) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if s, ok := ss.sessions[clientID]; ok {
+		now := time.Now()
+		s.DisconnectedAt = &now
+		ss.persist(clientID, s)
+	}
+}
+
+func (ss *SessionStore) ExpiredSessions() []string {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+	var expired []string
+	now := time.Now()
+	for id, s := range ss.sessions {
+		if s.DisconnectedAt == nil {
+			continue
+		}
+		if s.ExpiryInterval == 0xFFFFFFFF {
+			continue
+		}
+		deadline := s.DisconnectedAt.Add(time.Duration(s.ExpiryInterval) * time.Second)
+		if now.After(deadline) {
+			expired = append(expired, id)
+		}
+	}
+	return expired
 }
 
 func (ss *SessionStore) Remove(clientID string) {

@@ -146,11 +146,10 @@ func mqttReadPublish(t *testing.T, conn net.Conn, timeout time.Duration) *codec.
 	if fh.PacketType != codec.PUBLISH {
 		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pkt, err := codec.DecodePublishPacket(data, fh.QoS)
+	pkt, err := codec.DecodePublishPacket(data, fh.QoS, 4)
 	if err != nil {
 		t.Fatalf("decoding PUBLISH: %v", err)
 	}
-	conn.SetReadDeadline(time.Time{})
 	return pkt
 }
 
@@ -477,7 +476,7 @@ func TestBroker_PubSubQoS1(t *testing.T) {
 	if fh.PacketType != codec.PUBACK {
 		t.Fatalf("expected PUBACK, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	puback, err := codec.DecodePubackPacket(data)
+	puback, err := codec.DecodePubackPacket(data, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +494,7 @@ func TestBroker_PubSubQoS1(t *testing.T) {
 	if fh.PacketType != codec.PUBLISH {
 		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pubPkt, err := codec.DecodePublishPacket(data, fh.QoS)
+	pubPkt, err := codec.DecodePublishPacket(data, fh.QoS, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +532,7 @@ func TestBroker_PubSubQoS2(t *testing.T) {
 	if fh.PacketType != codec.PUBREC {
 		t.Fatalf("expected PUBREC, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pubrec, _ := codec.DecodePubrecPacket(data)
+	pubrec, _ := codec.DecodePubrecPacket(data, 4)
 	if pubrec.PacketID != 1 {
 		t.Fatalf("expected packet ID 1, got %d", pubrec.PacketID)
 	}
@@ -550,7 +549,7 @@ func TestBroker_PubSubQoS2(t *testing.T) {
 	if fh.PacketType != codec.PUBCOMP {
 		t.Fatalf("expected PUBCOMP, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pubcomp, _ := codec.DecodePubcompPacket(data)
+	pubcomp, _ := codec.DecodePubcompPacket(data, 4)
 	if pubcomp.PacketID != 1 {
 		t.Fatalf("expected packet ID 1, got %d", pubcomp.PacketID)
 	}
@@ -596,7 +595,7 @@ func TestBroker_OfflineMessages(t *testing.T) {
 	if fh.PacketType != codec.PUBLISH {
 		t.Fatalf("expected PUBLISH (offline msg), got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS)
+	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS, 4)
 	if string(pubPkt.Payload) != "queued-msg" {
 		t.Fatalf("expected queued-msg, got %s", pubPkt.Payload)
 	}
@@ -660,7 +659,7 @@ func TestBroker_PersistentSessionRecovery(t *testing.T) {
 	if fh.PacketType != codec.PUBLISH {
 		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(fh.PacketType))
 	}
-	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS)
+	pubPkt, _ := codec.DecodePublishPacket(data, fh.QoS, 4)
 	if string(pubPkt.Payload) != "after-restart" {
 		t.Fatalf("expected after-restart, got %s", pubPkt.Payload)
 	}
@@ -841,7 +840,7 @@ func TestKeepAliveTimeout_TriggersWill(t *testing.T) {
 	if pubFH.PacketType != codec.PUBLISH {
 		t.Fatalf("expected PUBLISH, got %s", codec.PacketTypeName(pubFH.PacketType))
 	}
-	pkt, _ := codec.DecodePublishPacket(pubData, pubFH.QoS)
+	pkt, _ := codec.DecodePublishPacket(pubData, pubFH.QoS, 4)
 	if pkt.Topic != "will/topic" || string(pkt.Payload) != "I died" {
 		t.Fatalf("unexpected will: topic=%s payload=%s", pkt.Topic, string(pkt.Payload))
 	}

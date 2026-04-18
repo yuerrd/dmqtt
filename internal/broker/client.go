@@ -188,7 +188,7 @@ func (c *Client) handleConnect() error {
 }
 
 func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
-	pkt, err := codec.DecodePublishPacket(data, fh.QoS)
+	pkt, err := codec.DecodePublishPacket(data, fh.QoS, 4)
 	if err != nil {
 		slog.Error("decode PUBLISH error", "client", c.clientID, "error", err)
 		return
@@ -247,7 +247,7 @@ func (c *Client) handlePublish(fh *codec.FixedHeader, data []byte) {
 }
 
 func (c *Client) handlePuback(data []byte) {
-	pkt, err := codec.DecodePubackPacket(data)
+	pkt, err := codec.DecodePubackPacket(data, 4)
 	if err != nil {
 		slog.Error("decode PUBACK error", "client", c.clientID, "error", err)
 		return
@@ -256,7 +256,7 @@ func (c *Client) handlePuback(data []byte) {
 }
 
 func (c *Client) handlePubrec(data []byte) {
-	pkt, err := codec.DecodePubrecPacket(data)
+	pkt, err := codec.DecodePubrecPacket(data, 4)
 	if err != nil {
 		slog.Error("decode PUBREC error", "client", c.clientID, "error", err)
 		return
@@ -267,7 +267,7 @@ func (c *Client) handlePubrec(data []byte) {
 }
 
 func (c *Client) handlePubrel(data []byte) {
-	pkt, err := codec.DecodePubrelPacket(data)
+	pkt, err := codec.DecodePubrelPacket(data, 4)
 	if err != nil {
 		slog.Error("decode PUBREL error", "client", c.clientID, "error", err)
 		return
@@ -278,7 +278,7 @@ func (c *Client) handlePubrel(data []byte) {
 }
 
 func (c *Client) handlePubcomp(data []byte) {
-	_, _ = codec.DecodePubcompPacket(data)
+	_, _ = codec.DecodePubcompPacket(data, 4)
 }
 
 func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {

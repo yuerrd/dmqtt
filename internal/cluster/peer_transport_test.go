@@ -1,7 +1,6 @@
 package cluster
 
 import (
-	"net"
 	"sync"
 	"testing"
 	"time"
@@ -22,21 +21,21 @@ func TestPeerTransport_SendReceive(t *testing.T) {
 	}
 
 	// Start receiver
-	pt1, err := NewPeerTransport("127.0.0.1:19001", "node-1", handler)
+	pt1, err := NewPeerTransport("127.0.0.1:0", "node-1", handler)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
 	defer pt1.Stop()
 
 	// Start sender
-	pt2, err := NewPeerTransport("127.0.0.1:19002", "node-2", nil)
+	pt2, err := NewPeerTransport("127.0.0.1:0", "node-2", nil)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
 	defer pt2.Stop()
 
-	pt2.AddPeer("node-1", "127.0.0.1:19001")
-	time.Sleep(100 * time.Millisecond) // let connection establish
+	pt2.AddPeer("node-1", pt1.listenAddr)
+	time.Sleep(500 * time.Millisecond) // QUIC handshake takes longer than TCP
 
 	msg := ForwardMessage{
 		Type:    MsgForward,
@@ -52,7 +51,7 @@ func TestPeerTransport_SendReceive(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("timeout waiting for message")
 	}
 
@@ -71,20 +70,20 @@ func TestPeerTransport_SendQoS1WithAck(t *testing.T) {
 		// receiving side: PeerTransport auto-sends ACK for QoS > 0
 	}
 
-	pt1, err := NewPeerTransport("127.0.0.1:19003", "node-1", handler)
+	pt1, err := NewPeerTransport("127.0.0.1:0", "node-1", handler)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
 	defer pt1.Stop()
 
-	pt2, err := NewPeerTransport("127.0.0.1:19004", "node-2", nil)
+	pt2, err := NewPeerTransport("127.0.0.1:0", "node-2", nil)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
 	defer pt2.Stop()
 
-	pt2.AddPeer("node-1", "127.0.0.1:19003")
-	time.Sleep(100 * time.Millisecond)
+	pt2.AddPeer("node-1", pt1.listenAddr)
+	time.Sleep(500 * time.Millisecond)
 
 	msg := ForwardMessage{
 		Type:    MsgForward,
@@ -93,14 +92,14 @@ func TestPeerTransport_SendQoS1WithAck(t *testing.T) {
 		Payload: []byte("23.5"),
 		QoS:     1,
 	}
-	err = pt2.SendReliable("node-1", msg, 3, 2*time.Second)
+	err = pt2.SendReliable("node-1", msg, 3, 5*time.Second)
 	if err != nil {
 		t.Fatalf("SendReliable: %v", err)
 	}
 }
 
 func TestPeerTransport_RemovePeer(t *testing.T) {
-	pt, err := NewPeerTransport("127.0.0.1:19005", "node-1", nil)
+	pt, err := NewPeerTransport("127.0.0.1:0", "node-1", nil)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
@@ -116,7 +115,7 @@ func TestPeerTransport_RemovePeer(t *testing.T) {
 }
 
 func TestPeerTransport_StopClosesConnections(t *testing.T) {
-	pt, err := NewPeerTransport("127.0.0.1:19006", "node-1", nil)
+	pt, err := NewPeerTransport("127.0.0.1:0", "node-1", nil)
 	if err != nil {
 		t.Fatalf("NewPeerTransport: %v", err)
 	}
@@ -129,22 +128,6 @@ func TestPeerTransport_StopClosesConnections(t *testing.T) {
 }
 
 func TestPeerTransport_CircuitBreakerBlocksSend(t *testing.T) {
-	// Start a receiver that accepts but never reads (simulates unresponsive peer)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			conn.Close() // close immediately to cause send failures
-		}
-	}()
-
 	handler := func(msg ForwardMessage) {}
 	pt, err := NewPeerTransport("127.0.0.1:0", "self", handler)
 	if err != nil {
@@ -161,9 +144,10 @@ func TestPeerTransport_CircuitBreakerBlocksSend(t *testing.T) {
 		MinRequests:    3,
 	}
 	pt.SetCircuitBreakerConfig(cbCfg)
-	pt.AddPeer("peer1", ln.Addr().String())
 
-	time.Sleep(100 * time.Millisecond) // let connection establish
+	// Point to a non-existent address — sends will fail (peer not connected)
+	pt.AddPeer("peer1", "127.0.0.1:19998")
+	time.Sleep(200 * time.Millisecond)
 
 	// Send several messages — they should fail and trip the breaker
 	msg := ForwardMessage{Type: MsgForward, Topic: "test", Payload: []byte("hello")}
@@ -219,7 +203,7 @@ func TestPeerTransport_MigrateMessages(t *testing.T) {
 	defer pt2.Stop()
 
 	pt2.AddPeer("node-1", pt1.listenAddr)
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Send migration data
 	migrateMsg := MigrateDataMessage{

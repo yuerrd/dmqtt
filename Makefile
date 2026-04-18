@@ -1,10 +1,13 @@
-.PHONY: build test lint clean run
+.PHONY: build bench test lint clean run
 
 BINARY=dmqtt
 BUILD_DIR=bin
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/dmqtt/
+
+bench:
+	go build -o $(BUILD_DIR)/dmqtt-bench ./cmd/dmqtt-bench/
 
 test:
 	go test -v -race -count=1 ./...

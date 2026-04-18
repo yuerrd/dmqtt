@@ -79,6 +79,9 @@ type Config struct {
 
 	// Tenant configuration
 	Tenant TenantConfig
+
+	// External plugin entries
+	Plugins []PluginEntry
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -179,6 +182,12 @@ type RuleEngineConfig struct {
 type TenantConfig struct {
 	Enabled     bool   `json:"enabled"`
 	TenantsFile string `json:"tenants_file"`
+}
+
+// PluginEntry describes an external interceptor plugin to load.
+type PluginEntry struct {
+	Path   string            `json:"path"`   // Absolute path to .so file
+	Config map[string]string `json:"config"` // Key-value config passed to NewInterceptor
 }
 
 // DefaultConfig returns a Config with sensible defaults.

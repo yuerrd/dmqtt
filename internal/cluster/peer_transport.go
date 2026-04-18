@@ -1,17 +1,24 @@
 package cluster
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
+	"math/big"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/langzp/dmqtt/internal/circuitbreaker"
+	"github.com/quic-go/quic-go"
 )
 
 // MessageType identifies the type of inter-node message.
@@ -70,13 +77,15 @@ type MigrateAckMessage struct {
 	Success  bool        `json:"success"`
 }
 
-// PeerTransport manages persistent TCP connections between cluster nodes.
+// PeerTransport manages persistent QUIC connections between cluster nodes.
 type PeerTransport struct {
-	listenAddr string
-	selfID     string
-	listener   net.Listener
-	handler    func(ForwardMessage)
-	msgID      atomic.Uint64
+	listenAddr   string
+	selfID       string
+	quicListener *quic.Listener
+	serverTLS    *tls.Config
+	clientTLS    *tls.Config
+	handler      func(ForwardMessage)
+	msgID        atomic.Uint64
 
 	mu    sync.RWMutex
 	peers map[string]*peerConn
@@ -95,28 +104,68 @@ type PeerTransport struct {
 type peerConn struct {
 	nodeID  string
 	addr    string
-	conn    net.Conn
+	qconn   *quic.Conn
+	stream  *quic.Stream
 	mu      sync.Mutex
 	closed  bool
 	done    chan struct{}
 	breaker *circuitbreaker.CircuitBreaker
 }
 
+// generateSelfSignedTLSConfig creates a self-signed TLS config using ECDSA P-256.
+func generateSelfSignedTLSConfig() (*tls.Config, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{{
+			Certificate: [][]byte{certDER},
+			PrivateKey:  key,
+		}},
+		NextProtos: []string{"dmqtt-peer"},
+	}, nil
+}
+
 // NewPeerTransport creates and starts a PeerTransport listening on the given address.
 func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (*PeerTransport, error) {
-	ln, err := net.Listen("tcp", listenAddr)
+	serverTLS, err := generateSelfSignedTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("peer transport generate TLS config: %w", err)
+	}
+
+	clientTLS := &tls.Config{
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"dmqtt-peer"},
+	}
+
+	ln, err := quic.ListenAddr(listenAddr, serverTLS, nil)
 	if err != nil {
 		return nil, fmt.Errorf("peer transport listen: %w", err)
 	}
 
 	pt := &PeerTransport{
-		listenAddr: ln.Addr().String(),
-		selfID:     selfID,
-		listener:   ln,
-		handler:    handler,
-		peers:      make(map[string]*peerConn),
-		done:       make(chan struct{}),
-		ackWaiters: make(map[uint64]chan struct{}),
+		listenAddr:   ln.Addr().String(),
+		selfID:       selfID,
+		quicListener: ln,
+		serverTLS:    serverTLS,
+		clientTLS:    clientTLS,
+		handler:      handler,
+		peers:        make(map[string]*peerConn),
+		done:         make(chan struct{}),
+		ackWaiters:   make(map[uint64]chan struct{}),
 	}
 
 	go pt.acceptLoop()
@@ -130,7 +179,7 @@ func (pt *PeerTransport) SetMigrateHandler(fn func(MigrateDataMessage)) {
 
 func (pt *PeerTransport) acceptLoop() {
 	for {
-		conn, err := pt.listener.Accept()
+		qconn, err := pt.quicListener.Accept(context.Background())
 		if err != nil {
 			select {
 			case <-pt.done:
@@ -140,11 +189,21 @@ func (pt *PeerTransport) acceptLoop() {
 				continue
 			}
 		}
-		go pt.handleConn(conn)
+		go pt.handleQUICConn(qconn)
 	}
 }
 
-func (pt *PeerTransport) handleConn(conn net.Conn) {
+func (pt *PeerTransport) handleQUICConn(qconn *quic.Conn) {
+	defer qconn.CloseWithError(0, "done")
+	stream, err := qconn.AcceptStream(context.Background())
+	if err != nil {
+		slog.Error("peer transport accept stream error", "error", err)
+		return
+	}
+	pt.handleConn(stream)
+}
+
+func (pt *PeerTransport) handleConn(conn io.ReadWriteCloser) {
 	defer conn.Close()
 
 	for {
@@ -265,7 +324,9 @@ func (pt *PeerTransport) connectPeer(pc *peerConn) {
 		default:
 		}
 
-		conn, err := net.DialTimeout("tcp", pc.addr, 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		qconn, err := quic.DialAddr(ctx, pc.addr, pt.clientTLS, nil)
+		cancel()
 		if err != nil {
 			select {
 			case <-pt.done:
@@ -281,16 +342,38 @@ func (pt *PeerTransport) connectPeer(pc *peerConn) {
 			}
 		}
 
+		stream, err := qconn.OpenStreamSync(context.Background())
+		if err != nil {
+			qconn.CloseWithError(0, "stream open failed")
+			select {
+			case <-pt.done:
+				return
+			case <-pc.done:
+				return
+			case <-time.After(backoff):
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+		}
+
 		pc.mu.Lock()
-		pc.conn = conn
+		pc.qconn = qconn
+		pc.stream = stream
 		pc.mu.Unlock()
 
 		// Read ACKs from this outbound connection
-		pt.handleConn(conn)
+		pt.handleConn(stream)
 
 		// Connection lost — reset and try reconnecting
 		pc.mu.Lock()
-		pc.conn = nil
+		if pc.qconn != nil {
+			pc.qconn.CloseWithError(0, "reconnecting")
+		}
+		pc.qconn = nil
+		pc.stream = nil
 		pc.mu.Unlock()
 		backoff = time.Second
 	}
@@ -308,8 +391,8 @@ func (pt *PeerTransport) RemovePeer(nodeID string) {
 	if ok {
 		close(pc.done)
 		pc.mu.Lock()
-		if pc.conn != nil {
-			pc.conn.Close()
+		if pc.qconn != nil {
+			pc.qconn.CloseWithError(0, "peer removed")
 		}
 		pc.closed = true
 		pc.mu.Unlock()
@@ -346,14 +429,14 @@ func (pt *PeerTransport) Send(nodeID string, msg ForwardMessage) error {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
 
-	if pc.conn == nil {
+	if pc.stream == nil {
 		if pc.breaker != nil {
 			pc.breaker.RecordFailure()
 		}
 		return fmt.Errorf("peer %s not connected", nodeID)
 	}
 
-	err = writeFrame(pc.conn, data)
+	err = writeFrame(pc.stream, data)
 	if pc.breaker != nil {
 		if err != nil {
 			pc.breaker.RecordFailure()
@@ -441,14 +524,14 @@ func (pt *PeerTransport) SendMigrate(nodeID string, msg MigrateDataMessage) erro
 	pt.ackMu.Unlock()
 
 	pc.mu.Lock()
-	if pc.conn == nil {
+	if pc.stream == nil {
 		pc.mu.Unlock()
 		pt.ackMu.Lock()
 		delete(pt.ackWaiters, key)
 		pt.ackMu.Unlock()
 		return fmt.Errorf("peer %s not connected", nodeID)
 	}
-	err = writeFrame(pc.conn, data)
+	err = writeFrame(pc.stream, data)
 	pc.mu.Unlock()
 	if err != nil {
 		pt.ackMu.Lock()
@@ -473,7 +556,7 @@ func (pt *PeerTransport) SendMigrate(nodeID string, msg MigrateDataMessage) erro
 // Stop shuts down the transport, closing all connections.
 func (pt *PeerTransport) Stop() error {
 	close(pt.done)
-	pt.listener.Close()
+	pt.quicListener.Close()
 
 	pt.mu.Lock()
 	for nodeID, pc := range pt.peers {
@@ -482,8 +565,8 @@ func (pt *PeerTransport) Stop() error {
 			close(pc.done)
 			pc.closed = true
 		}
-		if pc.conn != nil {
-			pc.conn.Close()
+		if pc.qconn != nil {
+			pc.qconn.CloseWithError(0, "transport stopping")
 		}
 		pc.mu.Unlock()
 		delete(pt.peers, nodeID)
@@ -506,19 +589,19 @@ func (pt *PeerTransport) SetCircuitBreakerConfig(cfg circuitbreaker.Config) {
 
 // --- Wire protocol: [4-byte big-endian length][JSON payload] ---
 
-func writeFrame(conn net.Conn, data []byte) error {
+func writeFrame(w io.Writer, data []byte) error {
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(data)))
-	if _, err := conn.Write(header); err != nil {
+	if _, err := w.Write(header); err != nil {
 		return err
 	}
-	_, err := conn.Write(data)
+	_, err := w.Write(data)
 	return err
 }
 
-func readFrame(conn net.Conn) ([]byte, error) {
+func readFrame(r io.Reader) ([]byte, error) {
 	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(header)
@@ -526,7 +609,7 @@ func readFrame(conn net.Conn) ([]byte, error) {
 		return nil, fmt.Errorf("frame too large: %d bytes", length)
 	}
 	data := make([]byte, length)
-	if _, err := io.ReadFull(conn, data); err != nil {
+	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
 	}
 	return data, nil

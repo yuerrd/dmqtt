@@ -5,9 +5,11 @@ go 1.25.6
 require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/google/cel-go v0.28.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/memberlist v0.5.4
 	github.com/prometheus/client_golang v1.15.0
 	github.com/prometheus/client_model v0.3.0
+	github.com/quic-go/quic-go v0.59.0
 	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b
 	golang.org/x/crypto v0.50.0
 	golang.org/x/time v0.15.0
@@ -31,7 +33,6 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
 	github.com/hashicorp/go-metrics v0.5.4 // indirect
@@ -47,7 +48,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/common v0.42.0 // indirect
 	github.com/prometheus/procfs v0.9.0 // indirect
-	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/rogpeppe/go-internal v1.10.0 // indirect
 	github.com/sean-/seed v0.0.0-20170313163322-e2103e2c3529 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect

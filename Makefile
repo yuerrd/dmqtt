@@ -1,4 +1,4 @@
-.PHONY: build bench test lint clean run
+.PHONY: build bench example-plugin test lint clean run
 
 BINARY=dmqtt
 BUILD_DIR=bin
@@ -8,6 +8,9 @@ build:
 
 bench:
 	go build -o $(BUILD_DIR)/dmqtt-bench ./cmd/dmqtt-bench/
+
+example-plugin:
+	go build -buildmode=plugin -o $(BUILD_DIR)/log-interceptor.so ./examples/plugins/loginterceptor/
 
 test:
 	go test -v -race -count=1 ./...

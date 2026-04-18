@@ -133,6 +133,19 @@ func main() {
 		chain.Register(ruleInterceptor)
 		slog.Info("rule engine enabled", "rules_file", cfg.RuleEngine.RulesFile, "rules", ruleEngine.RuleCount())
 	}
+	// Load external plugins
+	if len(cfg.Plugins) > 0 {
+		loader := plugin.NewPluginLoader()
+		extInterceptors, err := loader.LoadAll(cfg.Plugins)
+		if err != nil {
+			slog.Error("failed to load external plugin", "error", err)
+			os.Exit(1)
+		}
+		for _, ei := range extInterceptors {
+			chain.Register(ei)
+			slog.Info("external plugin loaded", "name", ei.Name())
+		}
+	}
 	if err := chain.InitAll(); err != nil {
 		slog.Error("failed to initialize interceptors", "error", err)
 		os.Exit(1)

@@ -1,4 +1,4 @@
-.PHONY: build bench example-plugin test lint clean run
+.PHONY: build bench example-plugin test lint clean run install
 
 BINARY=dmqtt
 BUILD_DIR=bin
@@ -26,3 +26,7 @@ clean:
 
 run: build
 	$(BUILD_DIR)/$(BINARY)
+
+install: build
+	@echo "Installing DMQTT to /opt/dmqtt..."
+	sudo ./deploy/bare-metal/install.sh

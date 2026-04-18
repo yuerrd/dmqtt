@@ -1,0 +1,12 @@
+/opt/dmqtt/logs/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 dmqtt dmqtt
+    postrotate
+        systemctl reload dmqtt 2>/dev/null || true
+    endscript
+}

@@ -1,0 +1,23 @@
+[Unit]
+Description=DMQTT Broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dmqtt
+Group=dmqtt
+EnvironmentFile=/etc/dmqtt/dmqtt.env
+ExecStart=/opt/dmqtt/bin/dmqtt
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+LimitNPROC=65536
+MemoryMax=16G
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dmqtt
+
+[Install]
+WantedBy=multi-user.target

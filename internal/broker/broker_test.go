@@ -1274,3 +1274,11 @@ tenants:
 		t.Errorf("expected payload '25.5', got %q", string(pkt.Payload))
 	}
 }
+
+func TestGetClientInfo_NotFound(t *testing.T) {
+	b := New(":0", nil)
+	info := b.GetClientInfo("nonexistent")
+	if info != nil {
+		t.Error("expected nil for unknown client")
+	}
+}

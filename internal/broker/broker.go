@@ -330,6 +330,24 @@ func (b *Broker) ConnectedClientIDs() []string {
 	return ids
 }
 
+// GetClientInfo returns metadata for a connected client, or nil if not found.
+func (b *Broker) GetClientInfo(clientID string) *ClientInfo {
+	b.mu.RLock()
+	c, ok := b.clients[clientID]
+	b.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return &ClientInfo{
+		ClientID:        c.clientID,
+		Username:        c.username,
+		RemoteAddr:      c.conn.RemoteAddr().String(),
+		ProtocolVersion: c.protocolVersion,
+		ConnectedAt:     c.connectedAt,
+		KeepAlive:       c.keepAlive,
+	}
+}
+
 // ActiveSubscriptions returns the total number of active subscriptions.
 func (b *Broker) ActiveSubscriptions() int {
 	return b.subscriptions.Count()

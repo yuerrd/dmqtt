@@ -24,9 +24,20 @@ type Client struct {
 	inflight        *InflightStore
 	keepAlive       time.Duration
 	protocolVersion byte
+	connectedAt     time.Time
 
 	mu     sync.Mutex
 	closed bool
+}
+
+// ClientInfo holds read-only client metadata for external consumers.
+type ClientInfo struct {
+	ClientID        string        `json:"client_id"`
+	Username        string        `json:"username"`
+	RemoteAddr      string        `json:"remote_addr"`
+	ProtocolVersion byte          `json:"protocol_version"`
+	ConnectedAt     time.Time     `json:"connected_at"`
+	KeepAlive       time.Duration `json:"keep_alive"`
 }
 
 func newClient(conn net.Conn, b *Broker) *Client {
@@ -132,6 +143,7 @@ func (c *Client) handleConnect() error {
 
 	c.clientID = pkt.ClientID
 	c.protocolVersion = pkt.ProtocolLevel
+	c.connectedAt = time.Now()
 
 	cleanStart := pkt.CleanSession
 	expiryInterval := uint32(0)

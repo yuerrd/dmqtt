@@ -374,6 +374,19 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 	start := time.Now()
 	matches := b.subscriptions.Match(topic)
 
+	// Snapshot clients under lock, deliver outside lock
+	type delivery struct {
+		client       *Client
+		clientID     string
+		effectiveQoS byte
+	}
+	var deliveries []delivery
+	type offlineDelivery struct {
+		clientID     string
+		effectiveQoS byte
+	}
+	var offlineDeliveries []offlineDelivery
+
 	b.mu.RLock()
 	for _, match := range matches {
 		effectiveQoS := qos
@@ -383,32 +396,41 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 
 		client, ok := b.clients[match.ClientID]
 		if ok {
-			if b.interceptors != nil {
-				evt := &plugin.DeliveryEvent{
-					ClientID: match.ClientID,
-					Topic:    topic,
-					Payload:  payload,
-					QoS:      effectiveQoS,
-				}
-				if err := b.interceptors.OnDelivery(context.Background(), evt); err != nil {
-					continue
-				}
-				client.deliverMessage(evt.Topic, evt.Payload, evt.QoS)
-			} else {
-				client.deliverMessage(topic, payload, effectiveQoS)
-			}
+			deliveries = append(deliveries, delivery{client: client, clientID: match.ClientID, effectiveQoS: effectiveQoS})
 		} else {
 			session := b.sessions.Get(match.ClientID)
 			if session != nil && session.ExpiryInterval != 0 {
-				b.offlineStore.Enqueue(match.ClientID, &OfflineMessage{
-					Topic:   topic,
-					Payload: payload,
-					QoS:     effectiveQoS,
-				})
+				offlineDeliveries = append(offlineDeliveries, offlineDelivery{clientID: match.ClientID, effectiveQoS: effectiveQoS})
 			}
 		}
 	}
 	b.mu.RUnlock()
+
+	// Deliver outside lock
+	for _, d := range deliveries {
+		if b.interceptors != nil {
+			evt := &plugin.DeliveryEvent{
+				ClientID: d.clientID,
+				Topic:    topic,
+				Payload:  payload,
+				QoS:      d.effectiveQoS,
+			}
+			if err := b.interceptors.OnDelivery(context.Background(), evt); err != nil {
+				continue
+			}
+			d.client.deliverMessage(evt.Topic, evt.Payload, evt.QoS)
+		} else {
+			d.client.deliverMessage(topic, payload, d.effectiveQoS)
+		}
+	}
+
+	for _, od := range offlineDeliveries {
+		b.offlineStore.Enqueue(od.clientID, &OfflineMessage{
+			Topic:   topic,
+			Payload: payload,
+			QoS:     od.effectiveQoS,
+		})
+	}
 	metrics.MessageLatency(qos, time.Since(start))
 
 	// Remote forwarding (only if not already forwarded and cluster is active)

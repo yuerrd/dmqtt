@@ -372,19 +372,53 @@ func RuleAction()        { ruleActions.Inc() }
 func RuleActionError()   { ruleActionErrors.Inc() }
 func RuleActionDropped() { ruleActionsDropped.Inc() }
 
+var tenantRegistry = struct {
+	mu       sync.Mutex
+	tenants  map[string]struct{}
+	maxCount int
+}{
+	tenants:  make(map[string]struct{}),
+	maxCount: 1000,
+}
+
+func isTenantRegistered(tenantID string) bool {
+	tenantRegistry.mu.Lock()
+	defer tenantRegistry.mu.Unlock()
+	if _, ok := tenantRegistry.tenants[tenantID]; ok {
+		return true
+	}
+	if len(tenantRegistry.tenants) >= tenantRegistry.maxCount {
+		return false
+	}
+	tenantRegistry.tenants[tenantID] = struct{}{}
+	return true
+}
+
 func TenantConnectionOpened(tenantID string) {
+	if !isTenantRegistered(tenantID) {
+		tenantID = "__overflow__"
+	}
 	tenantConnectionsActive.WithLabelValues(tenantID).Inc()
 }
 
 func TenantConnectionClosed(tenantID string) {
+	if !isTenantRegistered(tenantID) {
+		tenantID = "__overflow__"
+	}
 	tenantConnectionsActive.WithLabelValues(tenantID).Dec()
 }
 
 func TenantConnectionRejected(tenantID string) {
+	if !isTenantRegistered(tenantID) {
+		tenantID = "__overflow__"
+	}
 	tenantConnectionsRejected.WithLabelValues(tenantID).Inc()
 }
 
 func TenantMessageRejected(tenantID, reason string) {
+	if !isTenantRegistered(tenantID) {
+		tenantID = "__overflow__"
+	}
 	tenantMessagesRejected.WithLabelValues(tenantID, reason).Inc()
 }
 

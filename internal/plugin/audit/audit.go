@@ -32,6 +32,7 @@ type AuditInterceptor struct {
 	backupPath string
 	logger     *slog.Logger
 	done       chan struct{}
+	stopped    chan struct{}
 	closeOnce  sync.Once
 }
 
@@ -48,6 +49,7 @@ func New(cfg Config, logger *slog.Logger) *AuditInterceptor {
 		backupPath: cfg.BackupPath,
 		logger:     logger,
 		done:       make(chan struct{}),
+		stopped:    make(chan struct{}),
 	}
 }
 
@@ -62,7 +64,9 @@ func (a *AuditInterceptor) Close() error {
 	a.closeOnce.Do(func() {
 		close(a.done)
 	})
-	// Drain remaining entries after consumeLoop exits
+	// Wait for consumeLoop to exit
+	<-a.stopped
+	// Drain remaining entries
 	for {
 		select {
 		case entry := <-a.entries:
@@ -74,6 +78,7 @@ func (a *AuditInterceptor) Close() error {
 }
 
 func (a *AuditInterceptor) consumeLoop() {
+	defer close(a.stopped)
 	for {
 		select {
 		case entry := <-a.entries:

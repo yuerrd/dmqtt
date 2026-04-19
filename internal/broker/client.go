@@ -26,7 +26,8 @@ type Client struct {
 	protocolVersion byte
 	connectedAt     time.Time
 
-	sendCh chan []byte
+	sendCh   chan []byte
+	writeDone chan struct{}
 
 	mu     sync.Mutex
 	closed bool
@@ -49,6 +50,7 @@ func newClient(conn net.Conn, b *Broker) *Client {
 		packetIDs: NewPacketIDAllocator(),
 		inflight:  NewInflightStore(b.inflightLimit),
 		sendCh:    make(chan []byte, 256),
+		writeDone: make(chan struct{}),
 	}
 }
 
@@ -487,14 +489,9 @@ func (c *Client) send(data []byte) {
 }
 
 func (c *Client) writeLoop() {
+	defer close(c.writeDone)
 	for data := range c.sendCh {
-		c.mu.Lock()
-		if c.closed {
-			c.mu.Unlock()
-			return
-		}
 		_, err := c.conn.Write(data)
-		c.mu.Unlock()
 		if err != nil {
 			slog.Debug("write error, closing client", "client", c.clientID, "error", err)
 			c.conn.Close()
@@ -524,6 +521,8 @@ func (c *Client) close() {
 	close(c.sendCh)
 	c.mu.Unlock()
 
+	// Wait for writeLoop to drain remaining packets (e.g. CONNACK)
+	<-c.writeDone
 	c.conn.Close()
 
 	if c.clientID != "" {

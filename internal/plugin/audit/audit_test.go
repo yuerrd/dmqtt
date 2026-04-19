@@ -15,7 +15,6 @@ func TestAudit_OnConnect(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	a := New(Config{BufferSize: 100}, logger)
 	a.Init()
-	defer a.Close()
 
 	err := a.OnConnect(context.Background(), &plugin.ConnectEvent{
 		ClientID: "client-1",
@@ -25,8 +24,9 @@ func TestAudit_OnConnect(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Wait for async consumer
+	// Wait for async consumer then close to stop writes before reading
 	time.Sleep(50 * time.Millisecond)
+	a.Close()
 
 	if !bytes.Contains(buf.Bytes(), []byte("connect")) {
 		t.Fatalf("expected 'connect' in log output, got: %s", buf.String())
@@ -38,7 +38,6 @@ func TestAudit_OnPublish(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	a := New(Config{BufferSize: 100}, logger)
 	a.Init()
-	defer a.Close()
 
 	err := a.OnPublish(context.Background(), &plugin.PublishEvent{
 		ClientID: "client-1",
@@ -51,6 +50,7 @@ func TestAudit_OnPublish(t *testing.T) {
 	}
 
 	time.Sleep(50 * time.Millisecond)
+	a.Close()
 
 	if !bytes.Contains(buf.Bytes(), []byte("publish")) {
 		t.Fatalf("expected 'publish' in log output, got: %s", buf.String())
@@ -62,7 +62,6 @@ func TestAudit_OnDisconnect(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
 	a := New(Config{BufferSize: 100}, logger)
 	a.Init()
-	defer a.Close()
 
 	a.OnDisconnect(&plugin.DisconnectEvent{
 		ClientID: "client-1",
@@ -70,6 +69,7 @@ func TestAudit_OnDisconnect(t *testing.T) {
 	})
 
 	time.Sleep(50 * time.Millisecond)
+	a.Close()
 
 	if !bytes.Contains(buf.Bytes(), []byte("disconnect")) {
 		t.Fatalf("expected 'disconnect' in log output, got: %s", buf.String())
@@ -84,6 +84,7 @@ func TestAudit_BufferFull_Drops(t *testing.T) {
 		entries: make(chan *AuditEntry, 1),
 		logger:  logger,
 		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
 	}
 	// Don't call Init() — no consumer goroutine
 

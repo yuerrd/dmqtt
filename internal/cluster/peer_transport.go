@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/circuitbreaker"
+	"github.com/yuerrd/dmqtt/internal/circuitbreaker"
 	"github.com/quic-go/quic-go"
 )
 

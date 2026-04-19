@@ -13,14 +13,14 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/langzp/dmqtt/internal/auth"
-	"github.com/langzp/dmqtt/internal/cluster"
-	"github.com/langzp/dmqtt/internal/codec"
-	"github.com/langzp/dmqtt/internal/plugin"
-	"github.com/langzp/dmqtt/internal/ratelimit"
-	"github.com/langzp/dmqtt/internal/rule"
-	"github.com/langzp/dmqtt/internal/storage"
-	"github.com/langzp/dmqtt/internal/tenant"
+	"github.com/yuerrd/dmqtt/internal/auth"
+	"github.com/yuerrd/dmqtt/internal/cluster"
+	"github.com/yuerrd/dmqtt/internal/codec"
+	"github.com/yuerrd/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/ratelimit"
+	"github.com/yuerrd/dmqtt/internal/rule"
+	"github.com/yuerrd/dmqtt/internal/storage"
+	"github.com/yuerrd/dmqtt/internal/tenant"
 )
 
 func mqttConnect(t *testing.T, conn net.Conn, clientID string, cleanSession bool) {

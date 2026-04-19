@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/langzp/dmqtt/config"
+	"github.com/yuerrd/dmqtt/config"
 )
 
 // applyEnvOverrides reads DMQTT_* environment variables and overrides

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/langzp/dmqtt/internal/storage"
+	"github.com/yuerrd/dmqtt/internal/storage"
 )
 
 // WillStore manages will messages with in-memory cache and persistent storage.

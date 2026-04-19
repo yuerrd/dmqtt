@@ -3,7 +3,7 @@ package plugin
 import (
 	"testing"
 
-	"github.com/langzp/dmqtt/config"
+	"github.com/yuerrd/dmqtt/config"
 )
 
 func TestPluginLoader_LoadAll_EmptyConfig(t *testing.T) {

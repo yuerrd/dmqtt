@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/metrics"
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 // Config configures the audit interceptor.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/circuitbreaker"
+	"github.com/yuerrd/dmqtt/internal/circuitbreaker"
 )
 
 // ErrInterceptorSkipped is returned when the circuit breaker is open.

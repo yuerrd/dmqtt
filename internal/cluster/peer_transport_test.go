@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/circuitbreaker"
+	"github.com/yuerrd/dmqtt/internal/circuitbreaker"
 )
 
 func TestPeerTransport_SendReceive(t *testing.T) {

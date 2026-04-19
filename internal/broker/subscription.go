@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/metrics"
 )
 
 // SubscriptionMatch represents a matched subscriber for a topic.

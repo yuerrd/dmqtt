@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/langzp/dmqtt/config"
+	"github.com/yuerrd/dmqtt/config"
 )
 
 func TestApplyEnvOverrides_Defaults(t *testing.T) {

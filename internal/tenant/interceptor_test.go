@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 // mockResolver implements TenantResolver for testing

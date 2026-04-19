@@ -3,7 +3,7 @@ package rule
 import (
 	"context"
 
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 // RuleInterceptor bridges the rule engine into the plugin interceptor chain.

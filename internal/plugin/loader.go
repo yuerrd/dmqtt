@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"plugin"
 
-	"github.com/langzp/dmqtt/config"
+	"github.com/yuerrd/dmqtt/config"
 )
 
 // PluginLoader loads external Interceptor plugins from .so shared libraries.

@@ -1,4 +1,4 @@
-module github.com/langzp/dmqtt
+module github.com/yuerrd/dmqtt
 
 go 1.25.6
 

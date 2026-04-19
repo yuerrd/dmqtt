@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/langzp/dmqtt/internal/metrics"
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 // TenantResolver resolves a username to a tenant ID.

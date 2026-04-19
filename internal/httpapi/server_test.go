@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/broker"
-	"github.com/langzp/dmqtt/internal/cluster"
+	"github.com/yuerrd/dmqtt/internal/broker"
+	"github.com/yuerrd/dmqtt/internal/cluster"
 )
 
 type mockChecker struct {

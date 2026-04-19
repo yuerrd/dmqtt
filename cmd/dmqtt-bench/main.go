@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/bench"
+	"github.com/yuerrd/dmqtt/internal/bench"
 )
 
 func main() {

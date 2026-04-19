@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/metrics"
-	"github.com/langzp/dmqtt/internal/storage"
+	"github.com/yuerrd/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/storage"
 )
 
 const (

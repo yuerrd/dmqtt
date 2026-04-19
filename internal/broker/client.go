@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/codec"
-	"github.com/langzp/dmqtt/internal/metrics"
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/codec"
+	"github.com/yuerrd/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 // Client represents a connected MQTT client.

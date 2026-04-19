@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/plugin"
+	"github.com/yuerrd/dmqtt/internal/plugin"
 )
 
 func TestParseRules_Valid(t *testing.T) {

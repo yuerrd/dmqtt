@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/circuitbreaker"
+	"github.com/yuerrd/dmqtt/internal/circuitbreaker"
 )
 
 type slowInterceptor struct {

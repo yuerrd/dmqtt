@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/langzp/dmqtt/internal/metrics"
+	"github.com/yuerrd/dmqtt/internal/metrics"
 )
 
 // PublishFunc is the callback to republish a message into the broker.

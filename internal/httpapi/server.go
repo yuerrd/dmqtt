@@ -20,6 +20,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// clusterHTTPClient is a shared HTTP client for cluster-internal requests
+// with connection pooling and sensible timeouts.
+var clusterHTTPClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
+
 // ReadinessChecker reports whether the service is ready to accept traffic.
 type ReadinessChecker interface {
 	IsReady() bool
@@ -535,7 +546,7 @@ func (s *Server) fetchRemoteDevices(node cluster.NodeInfo) []clusterDeviceItem {
 		return nil
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clusterHTTPClient.Do(req)
 	if err != nil {
 		slog.Warn("failed to fetch devices from remote node", "node", node.ID, "error", err)
 		return nil
@@ -628,7 +639,7 @@ func (s *Server) fetchRemoteStats(node cluster.NodeInfo) *nodeStats {
 	if err != nil {
 		return nil
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clusterHTTPClient.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -662,7 +673,7 @@ func (s *Server) proxyDeviceDetail(w http.ResponseWriter, node cluster.NodeInfo,
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clusterHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}
@@ -692,7 +703,7 @@ func (s *Server) proxyDeviceDisconnect(w http.ResponseWriter, node cluster.NodeI
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clusterHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}

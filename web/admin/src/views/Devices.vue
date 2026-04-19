@@ -66,14 +66,8 @@
         </el-table-column>
       </el-table>
 
-      <div style="margin-top: 16px; display: flex; justify-content: flex-end">
-        <el-pagination
-          v-model:current-page="currentPage"
-          :page-size="pageSize"
-          :total="total"
-          layout="total, prev, pager, next"
-          @current-change="loadDevices"
-        />
+      <div style="margin-top: 12px; color: #999; font-size: 13px">
+        共 {{ filteredDevices.length }} 个设备
       </div>
     </el-card>
 
@@ -113,13 +107,9 @@
 import { ref, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { fetchDevices, fetchAllNodesDevices, fetchDevice, disconnectDevice, type DeviceSummary, type DeviceDetail } from '../api/devices'
-import { fetchNodes } from '../api/nodes'
+import { fetchClusterDevices, fetchDevice, disconnectDevice, type DeviceSummary, type DeviceDetail } from '../api/devices'
 
 const searchText = ref('')
-const currentPage = ref(1)
-const pageSize = 20
-const total = ref(0)
 const devices = ref<DeviceSummary[]>([])
 const loading = ref(false)
 const clusterMode = ref(false)
@@ -147,24 +137,12 @@ const subscriptionList = computed(() => {
 async function loadDevices() {
   loading.value = true
   try {
-    // Check if cluster mode
-    const nodesRes = await fetchNodes()
-    const nodes = nodesRes.nodes || []
-    currentNodeId.value = nodesRes.self
-    clusterMode.value = nodes.length > 1
-
-    if (clusterMode.value && nodes.some(n => n.httpPort > 0)) {
-      // Aggregate from all nodes
-      const allDevices = await fetchAllNodesDevices(nodes)
-      devices.value = allDevices
-      total.value = allDevices.length
-    } else {
-      // Single node
-      const res = await fetchDevices(currentPage.value, pageSize)
-      devices.value = res.devices || []
-      devices.value.forEach(d => d.node_id = res.node_id)
-      total.value = res.total
-    }
+    const res = await fetchClusterDevices()
+    devices.value = res.devices || []
+    currentNodeId.value = res.self
+    // Detect cluster mode: more than one unique node_id
+    const nodeIds = new Set(devices.value.map(d => d.node_id).filter(Boolean))
+    clusterMode.value = nodeIds.size > 1
   } catch {
     ElMessage.error('加载设备列表失败')
   } finally {
@@ -174,7 +152,6 @@ async function loadDevices() {
 
 function handleRefresh() {
   searchText.value = ''
-  currentPage.value = 1
   loadDevices()
 }
 

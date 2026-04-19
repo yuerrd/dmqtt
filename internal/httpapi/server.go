@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/langzp/dmqtt/internal/broker"
@@ -59,6 +62,8 @@ func New(addr string, checker ReadinessChecker) *Server {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
+	mux.HandleFunc("/api/v1/cluster/devices", s.handleClusterDevices)
+	mux.HandleFunc("/api/v1/cluster/stats", s.handleClusterStats)
 	mux.HandleFunc("/api/v1/cluster/migrations", s.handleMigrations)
 	mux.HandleFunc("/api/v1/cluster/migrations/", s.handleMigrationByID)
 	mux.HandleFunc("/api/v1/devices", s.handleDevices)
@@ -399,6 +404,229 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(detail)
+}
+
+// clusterDeviceItem is used for cluster-wide device aggregation.
+type clusterDeviceItem struct {
+	ClientID        string   `json:"client_id"`
+	Username        string   `json:"username"`
+	RemoteAddr      string   `json:"remote_addr"`
+	ProtocolVersion byte     `json:"protocol_version"`
+	ConnectedAt     string   `json:"connected_at"`
+	KeepAlive       int      `json:"keep_alive"`
+	Subscriptions   []string `json:"subscriptions"`
+	NodeID          string   `json:"node_id"`
+}
+
+// handleClusterDevices aggregates devices from all cluster nodes via backend proxy.
+func (s *Server) handleClusterDevices(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	selfID := ""
+	if s.clusterAPI != nil {
+		selfID = s.clusterAPI.Self().ID
+	}
+
+	// Collect local devices
+	localDevices := s.collectLocalDevices(selfID)
+
+	// If no cluster, return local only
+	if s.clusterAPI == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"devices": localDevices,
+			"total":   len(localDevices),
+			"self":    selfID,
+		})
+		return
+	}
+
+	allDevices := make([]clusterDeviceItem, 0, len(localDevices))
+	allDevices = append(allDevices, localDevices...)
+
+	// Fetch from remote nodes in parallel
+	members := s.clusterAPI.Members()
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, node := range members {
+		if node.ID == selfID || node.HTTPPort == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(n cluster.NodeInfo) {
+			defer wg.Done()
+			devices := s.fetchRemoteDevices(n)
+			mu.Lock()
+			allDevices = append(allDevices, devices...)
+			mu.Unlock()
+		}(node)
+	}
+	wg.Wait()
+
+	sort.Slice(allDevices, func(i, j int) bool {
+		return allDevices[i].ClientID < allDevices[j].ClientID
+	})
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"devices": allDevices,
+		"total":   len(allDevices),
+		"self":    selfID,
+	})
+}
+
+func (s *Server) collectLocalDevices(nodeID string) []clusterDeviceItem {
+	ids := s.brokerAPI.ConnectedClientIDs()
+	devices := make([]clusterDeviceItem, 0, len(ids))
+	for _, id := range ids {
+		info := s.brokerAPI.GetClientInfo(id)
+		if info == nil {
+			continue
+		}
+		var subs []string
+		if sess := s.brokerAPI.GetSessionData(id); sess != nil {
+			for topic := range sess.Subscriptions {
+				subs = append(subs, topic)
+			}
+		}
+		devices = append(devices, clusterDeviceItem{
+			ClientID:        info.ClientID,
+			Username:        info.Username,
+			RemoteAddr:      info.RemoteAddr,
+			ProtocolVersion: info.ProtocolVersion,
+			ConnectedAt:     info.ConnectedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			KeepAlive:       int(info.KeepAlive.Seconds()),
+			Subscriptions:   subs,
+			NodeID:          nodeID,
+		})
+	}
+	return devices
+}
+
+func (s *Server) fetchRemoteDevices(node cluster.NodeInfo) []clusterDeviceItem {
+	url := fmt.Sprintf("http://%s:%d/api/v1/devices?page=1&per_page=1000", node.Host, node.HTTPPort)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		slog.Warn("failed to create request for remote node", "node", node.ID, "error", err)
+		return nil
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		slog.Warn("failed to fetch devices from remote node", "node", node.ID, "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	var result struct {
+		Devices []clusterDeviceItem `json:"devices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil
+	}
+
+	for i := range result.Devices {
+		result.Devices[i].NodeID = node.ID
+	}
+	return result.Devices
+}
+
+type nodeStats struct {
+	NodeID      string `json:"node_id"`
+	Connections int    `json:"connections"`
+	Subs        int    `json:"subscriptions"`
+	Retained    int    `json:"retained"`
+}
+
+// handleClusterStats aggregates stats from all cluster nodes.
+func (s *Server) handleClusterStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	selfID := ""
+	if s.clusterAPI != nil {
+		selfID = s.clusterAPI.Self().ID
+	}
+
+	local := nodeStats{
+		NodeID:      selfID,
+		Connections: s.brokerAPI.ClientCount(),
+		Subs:        s.brokerAPI.ActiveSubscriptions(),
+		Retained:    s.brokerAPI.RetainedMessageCount(),
+	}
+	allStats := []nodeStats{local}
+	totalConns := local.Connections
+	totalSubs := local.Subs
+
+	if s.clusterAPI != nil {
+		members := s.clusterAPI.Members()
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+
+		for _, node := range members {
+			if node.ID == selfID || node.HTTPPort == 0 {
+				continue
+			}
+			wg.Add(1)
+			go func(n cluster.NodeInfo) {
+				defer wg.Done()
+				ns := s.fetchRemoteStats(n)
+				if ns != nil {
+					mu.Lock()
+					allStats = append(allStats, *ns)
+					totalConns += ns.Connections
+					totalSubs += ns.Subs
+					mu.Unlock()
+				}
+			}(node)
+		}
+		wg.Wait()
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"nodes":               allStats,
+		"total_connections":   totalConns,
+		"total_subscriptions": totalSubs,
+		"self":                selfID,
+	})
+}
+
+func (s *Server) fetchRemoteStats(node cluster.NodeInfo) *nodeStats {
+	url := fmt.Sprintf("http://%s:%d/api/v1/stats", node.Host, node.HTTPPort)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var raw map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil
+	}
+
+	conns, _ := raw["connected_clients"].(float64)
+	subs, _ := raw["active_subscriptions"].(float64)
+	retained, _ := raw["retained_messages"].(float64)
+
+	return &nodeStats{
+		NodeID:      node.ID,
+		Connections: int(conns),
+		Subs:        int(subs),
+		Retained:    int(retained),
+	}
 }
 
 // corsMiddleware adds CORS headers for cross-node admin dashboard requests.

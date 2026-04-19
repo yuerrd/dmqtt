@@ -346,6 +346,17 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && parts[1] == "disconnect" && r.Method == http.MethodPost {
 		info := s.brokerAPI.GetClientInfo(deviceID)
 		if info == nil {
+			// Proxy disconnect to remote node
+			if s.clusterAPI != nil {
+				for _, node := range s.clusterAPI.Members() {
+					if node.ID == s.clusterAPI.Self().ID || node.HTTPPort == 0 {
+						continue
+					}
+					if s.proxyDeviceDisconnect(w, node, deviceID) {
+						return
+					}
+				}
+			}
 			w.WriteHeader(http.StatusNotFound)
 			json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
 			return
@@ -362,6 +373,17 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 
 	info := s.brokerAPI.GetClientInfo(deviceID)
 	if info == nil {
+		// Try proxy to remote node that owns this device
+		if s.clusterAPI != nil {
+			for _, node := range s.clusterAPI.Members() {
+				if node.ID == s.clusterAPI.Self().ID || node.HTTPPort == 0 {
+					continue
+				}
+				if s.proxyDeviceDetail(w, node, deviceID) {
+					return
+				}
+			}
+		}
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
 		return
@@ -627,6 +649,67 @@ func (s *Server) fetchRemoteStats(node cluster.NodeInfo) *nodeStats {
 		Subs:        int(subs),
 		Retained:    int(retained),
 	}
+}
+
+// proxyDeviceDetail forwards a device detail request to a remote node.
+// Returns true if the remote node had the device.
+func (s *Server) proxyDeviceDetail(w http.ResponseWriter, node cluster.NodeInfo, deviceID string) bool {
+	url := fmt.Sprintf("http://%s:%d/api/v1/devices/%s", node.Host, node.HTTPPort, deviceID)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
+	return true
+}
+
+// proxyDeviceDisconnect forwards a disconnect request to a remote node.
+func (s *Server) proxyDeviceDisconnect(w http.ResponseWriter, node cluster.NodeInfo, deviceID string) bool {
+	url := fmt.Sprintf("http://%s:%d/api/v1/devices/%s/disconnect", node.Host, node.HTTPPort, deviceID)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
+	return true
 }
 
 // corsMiddleware adds CORS headers for cross-node admin dashboard requests.

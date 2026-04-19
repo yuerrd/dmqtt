@@ -142,15 +142,30 @@ async function loadDevices() {
     currentNodeId.value = res.self
     const nodeIds = new Set(devices.value.map(d => d.node_id).filter(Boolean))
     clusterMode.value = nodeIds.size > 1
+    if (consecutiveErrors > 0) {
+      consecutiveErrors = 0
+      clearInterval(pollTimer)
+      pollInterval = 5000
+      pollTimer = setInterval(loadDevices, pollInterval)
+      ElMessage.success('设备列表连接已恢复')
+    }
   } catch {
-    ElMessage.error('加载设备列表失败')
+    consecutiveErrors++
+    if (consecutiveErrors === 1) {
+      ElMessage.error('加载设备列表失败，已自动降低刷新频率')
+      clearInterval(pollTimer)
+      pollInterval = Math.min(pollInterval * 2, 30000)
+      pollTimer = setInterval(loadDevices, pollInterval)
+    }
   } finally {
     loading.value = false
   }
 }
 
-// Auto-refresh every 5 seconds
-const pollTimer = setInterval(loadDevices, 5000)
+// Auto-refresh with error recovery
+let pollInterval = 5000
+let pollTimer = setInterval(loadDevices, pollInterval)
+let consecutiveErrors = 0
 onUnmounted(() => clearInterval(pollTimer))
 
 function handleRefresh() {

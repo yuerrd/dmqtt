@@ -11,19 +11,19 @@
         :collapse="isCollapsed"
         style="border-right: none"
       >
-        <el-menu-item index="/admin/">
+        <el-menu-item index="/">
           <el-icon><Monitor /></el-icon>
           <template #title>仪表盘</template>
         </el-menu-item>
-        <el-menu-item index="/admin/devices">
+        <el-menu-item index="/devices">
           <el-icon><Connection /></el-icon>
           <template #title>设备管理</template>
         </el-menu-item>
-        <el-menu-item index="/admin/cluster">
+        <el-menu-item index="/cluster">
           <el-icon><Grid /></el-icon>
           <template #title>集群监控</template>
         </el-menu-item>
-        <el-menu-item index="/admin/metrics">
+        <el-menu-item index="/metrics">
           <el-icon><DataLine /></el-icon>
           <template #title>系统指标</template>
         </el-menu-item>
@@ -53,10 +53,10 @@ const route = useRoute()
 const isCollapsed = ref(false)
 
 const titleMap: Record<string, string> = {
-  '/admin/': '仪表盘',
-  '/admin/devices': '设备管理',
-  '/admin/cluster': '集群监控',
-  '/admin/metrics': '系统指标',
+  '/': '仪表盘',
+  '/devices': '设备管理',
+  '/cluster': '集群监控',
+  '/metrics': '系统指标',
 }
 const pageTitle = computed(() => titleMap[route.path] || 'DMQTT')
 </script>

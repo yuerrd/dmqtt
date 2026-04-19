@@ -26,7 +26,12 @@ import (
 	"github.com/langzp/dmqtt/internal/transport"
 )
 
+// Version is set via -ldflags at build time.
+var Version = "dev"
+
 func main() {
+	slog.Info("starting DMQTT", "version", Version)
+
 	cfg := config.DefaultConfig()
 	applyEnvOverrides(cfg)
 

@@ -88,6 +88,11 @@ func main() {
 	b := broker.New(cfg.TCPAddr, store)
 	b.SetAuth(authn, authz)
 
+	if cfg.MaxConnections > 0 {
+		b.SetMaxConnections(cfg.MaxConnections)
+		slog.Info("max connections limit set", "max", cfg.MaxConnections)
+	}
+
 	// Interceptor chain
 	chain := plugin.NewInterceptorChain()
 	var tenantManager *tenant.TenantManager

@@ -35,7 +35,8 @@ type Broker struct {
 	rateLimiter   ratelimit.RateLimiter
 	interceptors  *plugin.InterceptorChain
 
-	inflightLimit int
+	inflightLimit  int
+	maxConnections int
 
 	mu      sync.RWMutex
 	clients map[string]*Client
@@ -140,6 +141,11 @@ func (b *Broker) acceptLoop(l transport.Listener) {
 		if err := b.rateLimiter.AllowConnect(""); err != nil {
 			slog.Warn("connection rate limited", "error", err)
 			metrics.RateLimitRejected("connect", err.Error())
+			conn.Close()
+			continue
+		}
+		if b.maxConnections > 0 && b.ClientCount() >= b.maxConnections {
+			slog.Warn("max connections reached, rejecting", "max", b.maxConnections)
 			conn.Close()
 			continue
 		}
@@ -313,6 +319,12 @@ func (b *Broker) SetAuth(authn auth.Authenticator, authz auth.Authorizer) {
 // SetRateLimiter sets the rate limiter. Must be called before Start().
 func (b *Broker) SetRateLimiter(rl ratelimit.RateLimiter) {
 	b.rateLimiter = rl
+}
+
+// SetMaxConnections sets the maximum number of concurrent client connections.
+// Zero means unlimited.
+func (b *Broker) SetMaxConnections(max int) {
+	b.maxConnections = max
 }
 
 // SetInterceptors sets the interceptor chain for the broker.

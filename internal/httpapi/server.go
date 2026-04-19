@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,11 +48,12 @@ type Server struct {
 	coordinator *cluster.MigrationCoordinator
 	brokerAPI   BrokerAPI
 	clusterAPI  ClusterAPI
+	startTime   time.Time
 }
 
 // New creates a new HTTP API server.
 func New(addr string, checker ReadinessChecker) *Server {
-	s := &Server{checker: checker}
+	s := &Server{checker: checker, startTime: time.Now()}
 
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -201,11 +203,19 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
 		return
 	}
-	stats := map[string]int{
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	stats := map[string]interface{}{
 		"connected_clients":    s.brokerAPI.ClientCount(),
 		"active_subscriptions": s.brokerAPI.ActiveSubscriptions(),
 		"retained_messages":    s.brokerAPI.RetainedMessageCount(),
 		"cluster_nodes":        s.brokerAPI.ClusterNodeCount(),
+		"uptime_seconds":       int(time.Since(s.startTime).Seconds()),
+		"goroutines":           runtime.NumGoroutine(),
+		"memory_alloc_bytes":   memStats.Alloc,
+		"memory_sys_bytes":     memStats.Sys,
+		"gc_pause_total_ns":    memStats.PauseTotalNs,
 	}
 	json.NewEncoder(w).Encode(stats)
 }

@@ -555,3 +555,54 @@ func TestMigrationAPI_CancelNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
 	}
 }
+
+func TestStats_Enhanced(t *testing.T) {
+	checker := &mockChecker{ready: true}
+	srv := New(":0", checker)
+	srv.SetBrokerAPI(&mockBrokerAPI{
+		clientIDs: []string{"c1", "c2"},
+	})
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer srv.Stop()
+
+	url := fmt.Sprintf("http://%s/api/v1/stats", srv.Addr())
+	var resp *http.Response
+	var err error
+	for i := 0; i < 10; i++ {
+		resp, err = http.Get(url)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("GET /api/v1/stats: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if int(body["connected_clients"].(float64)) != 2 {
+		t.Errorf("connected_clients = %v, want 2", body["connected_clients"])
+	}
+
+	requiredFields := []string{
+		"uptime_seconds", "goroutines",
+		"memory_alloc_bytes", "memory_sys_bytes",
+		"gc_pause_total_ns",
+	}
+	for _, f := range requiredFields {
+		if _, ok := body[f]; !ok {
+			t.Errorf("missing field %q in /stats response", f)
+		}
+	}
+}

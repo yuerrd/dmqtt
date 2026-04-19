@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -393,12 +392,12 @@ func main() {
 		break
 	}
 
-	fmt.Println("DMQTT shutting down...")
+	slog.Info("DMQTT shutting down...")
 	if ruleEngine != nil {
 		ruleEngine.Close()
 	}
-	b.Stop()
-	fmt.Println("DMQTT stopped")
+	b.GracefulStop(cfg.Shutdown.DrainTimeout)
+	slog.Info("DMQTT stopped")
 }
 
 func parseHostPort(addr string) (string, int, error) {

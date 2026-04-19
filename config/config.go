@@ -85,6 +85,8 @@ type Config struct {
 
 	// External plugin entries
 	Plugins []PluginEntry
+
+	Shutdown ShutdownConfig
 }
 
 // ClusterConfig holds cluster-related settings.
@@ -201,6 +203,11 @@ type PluginEntry struct {
 	Config map[string]string `json:"config"` // Key-value config passed to NewInterceptor
 }
 
+// ShutdownConfig holds graceful shutdown settings.
+type ShutdownConfig struct {
+	DrainTimeout time.Duration
+}
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -278,6 +285,9 @@ func DefaultConfig() *Config {
 			ReplicaCount:      2,
 			SyncQoS2:          true,
 			TakeoverTimeoutMs: 2000,
+		},
+		Shutdown: ShutdownConfig{
+			DrainTimeout: 30 * time.Second,
 		},
 	}
 }

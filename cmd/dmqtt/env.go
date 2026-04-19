@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/langzp/dmqtt/config"
 )
@@ -73,6 +74,13 @@ func applyEnvOverrides(cfg *config.Config) {
 	if v := os.Getenv("DMQTT_REPLICATION_TAKEOVER_TIMEOUT_MS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			cfg.Replication.TakeoverTimeoutMs = n
+		}
+	}
+
+	// Shutdown overrides
+	if v := os.Getenv("DMQTT_SHUTDOWN_DRAIN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Shutdown.DrainTimeout = d
 		}
 	}
 }

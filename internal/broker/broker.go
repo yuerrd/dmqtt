@@ -184,6 +184,58 @@ func (b *Broker) Stop() {
 	b.mu.RUnlock()
 }
 
+// GracefulStop stops accepting new connections, waits for existing connections
+// to drain up to the given timeout, then forcefully closes remaining connections.
+func (b *Broker) GracefulStop(timeout time.Duration) {
+	slog.Info("entering drain mode, stopping listeners")
+
+	// Stop listeners first (stop accepting new connections)
+	b.mu.Lock()
+	listeners := b.listeners
+	b.listeners = nil
+	b.mu.Unlock()
+
+	for _, l := range listeners {
+		l.Close()
+	}
+
+	if b.reaper != nil {
+		b.reaper.Stop()
+	}
+
+	// Wait for clients to disconnect naturally
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			remaining := b.ClientCount()
+			if remaining > 0 {
+				slog.Warn("drain timeout reached, force closing", "remaining", remaining)
+			}
+			b.forceCloseClients()
+			close(b.done)
+			return
+		case <-ticker.C:
+			if b.ClientCount() == 0 {
+				slog.Info("all clients drained")
+				close(b.done)
+				return
+			}
+		}
+	}
+}
+
+func (b *Broker) forceCloseClients() {
+	b.mu.RLock()
+	for _, c := range b.clients {
+		c.conn.Close()
+	}
+	b.mu.RUnlock()
+}
+
 func (b *Broker) Addr() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

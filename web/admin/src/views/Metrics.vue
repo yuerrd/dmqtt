@@ -5,7 +5,7 @@
         <el-card>
           <div style="text-align: center">
             <div style="font-size: 28px; font-weight: bold; color: #67c23a">{{ uptimeDisplay }}</div>
-            <div style="color: #909399; margin-top: 4px">运行时间</div>
+            <div style="color: #909399; margin-top: 4px">{{ t('metrics.uptime') }}</div>
           </div>
         </el-card>
       </el-col>
@@ -21,31 +21,31 @@
         <el-card>
           <div style="text-align: center">
             <div style="font-size: 28px; font-weight: bold; color: #e6a23c">{{ latestGcPause }}</div>
-            <div style="color: #909399; margin-top: 4px">GC 总暂停</div>
+            <div style="color: #909399; margin-top: 4px">{{ t('metrics.gcPause') }}</div>
           </div>
         </el-card>
       </el-col>
     </el-row>
     <el-row :gutter="16" style="margin-bottom: 20px">
       <el-col :span="12">
-        <el-card header="内存分配 (Alloc)">
+        <el-card :header="t('metrics.memoryAlloc')">
           <v-chart :option="allocChartOption" style="height: 280px" autoresize />
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="内存总量 (Sys)">
+        <el-card :header="t('metrics.memorySys')">
           <v-chart :option="sysChartOption" style="height: 280px" autoresize />
         </el-card>
       </el-col>
     </el-row>
     <el-row :gutter="16">
       <el-col :span="12">
-        <el-card header="Goroutine 数量">
+        <el-card :header="t('metrics.goroutineCount')">
           <v-chart :option="goroutineChartOption" style="height: 280px" autoresize />
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="GC 暂停时间">
+        <el-card :header="t('metrics.gcPauseTime')">
           <v-chart :option="gcChartOption" style="height: 280px" autoresize />
         </el-card>
       </el-col>
@@ -58,6 +58,7 @@
 
 <script setup lang="ts">
 import { computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -69,6 +70,7 @@ import { useTimeSeriesBuffer } from '../composables/useTimeSeriesBuffer'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent])
 
+const { t } = useI18n()
 const { data: stats, error } = usePolling(fetchStats, 5000)
 const { points, push } = useTimeSeriesBuffer(60)
 

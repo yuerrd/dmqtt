@@ -13,19 +13,19 @@
       >
         <el-menu-item index="/">
           <el-icon><Monitor /></el-icon>
-          <template #title>仪表盘</template>
+          <template #title>{{ t('nav.dashboard') }}</template>
         </el-menu-item>
         <el-menu-item index="/devices">
           <el-icon><Connection /></el-icon>
-          <template #title>设备管理</template>
+          <template #title>{{ t('nav.devices') }}</template>
         </el-menu-item>
         <el-menu-item index="/cluster">
           <el-icon><Grid /></el-icon>
-          <template #title>集群监控</template>
+          <template #title>{{ t('nav.cluster') }}</template>
         </el-menu-item>
         <el-menu-item index="/metrics">
           <el-icon><DataLine /></el-icon>
-          <template #title>系统指标</template>
+          <template #title>{{ t('nav.metrics') }}</template>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -36,7 +36,11 @@
           <Expand v-else />
         </el-icon>
         <span style="margin-left: 16px; font-size: 16px; font-weight: 500">{{ pageTitle }}</span>
-        <el-tag v-if="nodeId" type="success" size="small" style="margin-left: auto">节点: {{ nodeId }}</el-tag>
+        <el-button-group size="small" style="margin-left: auto">
+          <el-button :type="locale === 'zh' ? 'primary' : 'default'" @click="switchLang('zh')">中文</el-button>
+          <el-button :type="locale === 'en' ? 'primary' : 'default'" @click="switchLang('en')">EN</el-button>
+        </el-button-group>
+        <el-tag v-if="nodeId" type="success" size="small" style="margin-left: 12px">{{ t('common.node') }}: {{ nodeId }}</el-tag>
       </el-header>
       <el-main style="background: #f5f7fa">
         <router-view />
@@ -48,12 +52,19 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { Monitor, Connection, Grid, DataLine, Fold, Expand } from '@element-plus/icons-vue'
 import { fetchStats } from '../api/stats'
 
 const route = useRoute()
+const { t, locale } = useI18n()
 const isCollapsed = ref(false)
 const nodeId = ref('')
+
+function switchLang(lang: string) {
+  locale.value = lang
+  localStorage.setItem('dmqtt-locale', lang)
+}
 
 onMounted(async () => {
   try {
@@ -62,11 +73,13 @@ onMounted(async () => {
   } catch {}
 })
 
-const titleMap: Record<string, string> = {
-  '/': '仪表盘',
-  '/devices': '设备管理',
-  '/cluster': '集群监控',
-  '/metrics': '系统指标',
-}
-const pageTitle = computed(() => titleMap[route.path] || 'DMQTT')
+const pageTitle = computed(() => {
+  const map: Record<string, string> = {
+    '/': t('nav.dashboard'),
+    '/devices': t('nav.devices'),
+    '/cluster': t('nav.cluster'),
+    '/metrics': t('nav.metrics'),
+  }
+  return map[route.path] || 'DMQTT'
+})
 </script>

@@ -13,39 +13,39 @@
 
     <!-- Per-node stats breakdown -->
     <el-card v-if="clusterNodes.length > 1" style="margin-bottom: 20px">
-      <template #header>各节点概况</template>
+      <template #header>{{ t('dashboard.nodeOverview') }}</template>
       <el-table :data="clusterNodes" size="small" stripe>
-        <el-table-column prop="node_id" label="节点">
+        <el-table-column prop="node_id" :label="t('common.node')">
           <template #default="{ row }">
             <el-tag size="small" :type="row.node_id === selfNodeId ? 'success' : 'info'">{{ row.node_id }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="connections" label="连接数" />
-        <el-table-column prop="subscriptions" label="订阅数" />
-        <el-table-column prop="retained" label="保留消息" />
+        <el-table-column prop="connections" :label="t('dashboard.connections')" />
+        <el-table-column prop="subscriptions" :label="t('dashboard.subscriptions')" />
+        <el-table-column prop="retained" :label="t('dashboard.retained')" />
       </el-table>
     </el-card>
 
     <el-row :gutter="16" style="margin-bottom: 20px">
       <el-col :span="12">
-        <el-card header="连接数趋势（集群）">
+        <el-card :header="t('dashboard.connectionsTrend')">
           <v-chart :option="connectionsChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="内存使用趋势">
+        <el-card :header="t('dashboard.memoryTrend')">
           <v-chart :option="memoryChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
     </el-row>
     <el-row :gutter="16">
       <el-col :span="12">
-        <el-card header="Goroutine 趋势">
+        <el-card :header="t('dashboard.goroutineTrend')">
           <v-chart :option="goroutineChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="订阅数趋势（集群）">
+        <el-card :header="t('dashboard.subscriptionsTrend')">
           <v-chart :option="subsChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
@@ -58,6 +58,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -69,6 +70,7 @@ import { useTimeSeriesBuffer } from '../composables/useTimeSeriesBuffer'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, TitleComponent])
 
+const { t } = useI18n()
 const { data: stats, error } = usePolling(fetchStats, 5000)
 const { points, push } = useTimeSeriesBuffer(60)
 
@@ -106,14 +108,14 @@ const statCards = computed(() => {
   const s = stats.value
   if (!s) return []
   return [
-    { label: '在线设备（集群）', value: totalConnections.value || s.connected_clients },
-    { label: '活跃订阅（集群）', value: totalSubscriptions.value || s.active_subscriptions },
-    { label: '保留消息', value: s.retained_messages },
-    { label: '集群节点', value: clusterNodes.value.length || s.cluster_nodes },
+    { label: t('dashboard.onlineDevices'), value: totalConnections.value || s.connected_clients },
+    { label: t('dashboard.activeSubscriptions'), value: totalSubscriptions.value || s.active_subscriptions },
+    { label: t('dashboard.retainedMessages'), value: s.retained_messages },
+    { label: t('dashboard.clusterNodes'), value: clusterNodes.value.length || s.cluster_nodes },
   ]
 })
 
-function makeLineOption(label: string, field: string, unit = '') {
+function makeLineOption(labelFn: () => string, field: string, unit = '') {
   return computed(() => ({
     animation: false,
     tooltip: { trigger: 'axis' as const },
@@ -122,7 +124,7 @@ function makeLineOption(label: string, field: string, unit = '') {
     yAxis: { type: 'value' as const, name: unit },
     series: [
       {
-        name: label,
+        name: labelFn(),
         type: 'line' as const,
         data: points.value.map((p) => p[field]),
         smooth: true,
@@ -133,8 +135,8 @@ function makeLineOption(label: string, field: string, unit = '') {
   }))
 }
 
-const connectionsChartOption = makeLineOption('连接数', 'connected_clients')
-const memoryChartOption = makeLineOption('内存', 'memory_alloc_mb', 'MB')
-const goroutineChartOption = makeLineOption('Goroutines', 'goroutines')
-const subsChartOption = makeLineOption('订阅数', 'total_subscriptions')
+const connectionsChartOption = makeLineOption(() => t('dashboard.connections'), 'connected_clients')
+const memoryChartOption = makeLineOption(() => t('dashboard.memory'), 'memory_alloc_mb', 'MB')
+const goroutineChartOption = makeLineOption(() => 'Goroutines', 'goroutines')
+const subsChartOption = makeLineOption(() => t('dashboard.subscriptions'), 'total_subscriptions')
 </script>

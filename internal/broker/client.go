@@ -26,6 +26,8 @@ type Client struct {
 	protocolVersion byte
 	connectedAt     time.Time
 
+	sendCh chan []byte
+
 	mu     sync.Mutex
 	closed bool
 }
@@ -46,12 +48,15 @@ func newClient(conn net.Conn, b *Broker) *Client {
 		broker:    b,
 		packetIDs: NewPacketIDAllocator(),
 		inflight:  NewInflightStore(b.inflightLimit),
+		sendCh:    make(chan []byte, 256),
 	}
 }
 
 // serve handles the client lifecycle: CONNECT then read loop.
 func (c *Client) serve() {
 	defer c.close()
+
+	go c.writeLoop()
 
 	if err := c.handleConnect(); err != nil {
 		slog.Error("connect error", "remote", c.conn.RemoteAddr().String(), "error", err)
@@ -352,7 +357,7 @@ func (c *Client) deliverMessage(topic string, payload []byte, qos byte) {
 		}
 	}
 
-	go c.send(pkt.Encode())
+	c.send(pkt.Encode())
 }
 
 func (c *Client) handleSubscribe(data []byte) {
@@ -474,13 +479,28 @@ func (c *Client) handleUnsubscribe(data []byte) {
 }
 
 func (c *Client) send(data []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return
+	select {
+	case c.sendCh <- data:
+	default:
+		slog.Warn("send buffer full, dropping packet", "client", c.clientID)
 	}
-	c.conn.Write(data)
+}
+
+func (c *Client) writeLoop() {
+	for data := range c.sendCh {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return
+		}
+		_, err := c.conn.Write(data)
+		c.mu.Unlock()
+		if err != nil {
+			slog.Debug("write error, closing client", "client", c.clientID, "error", err)
+			c.conn.Close()
+			return
+		}
+	}
 }
 
 func (c *Client) sendDisconnectAndClose(reasonCode byte) {
@@ -501,6 +521,7 @@ func (c *Client) close() {
 		return
 	}
 	c.closed = true
+	close(c.sendCh)
 	c.mu.Unlock()
 
 	c.conn.Close()

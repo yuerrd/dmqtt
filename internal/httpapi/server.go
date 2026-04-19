@@ -65,6 +65,7 @@ func New(addr string, checker ReadinessChecker) *Server {
 	mux.HandleFunc("/api/v1/devices/", s.handleDeviceByID)
 	mux.HandleFunc("/api/v1/stats", s.handleStats)
 	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
+	mux.Handle("/admin/", adminHandler())
 
 	s.httpServer = &http.Server{
 		Addr:         addr,

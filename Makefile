@@ -1,9 +1,17 @@
-.PHONY: build bench example-plugin test lint clean run install docker-build
+.PHONY: build build-admin bench example-plugin test lint clean run install docker-build
 
 BINARY=dmqtt
 BUILD_DIR=bin
 
-build:
+build-admin:
+	cd web/admin && npm install && npm run build
+	rm -rf internal/httpapi/admin
+	cp -r web/admin/dist internal/httpapi/admin
+
+build: build-admin
+	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/dmqtt/
+
+build-go:
 	go build -o $(BUILD_DIR)/$(BINARY) ./cmd/dmqtt/
 
 bench:

@@ -294,6 +294,7 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 	}
 
 	go pt.acceptLoop()
+	go pt.cleanupStaleAckWaiters()
 	return pt, nil
 }
 
@@ -363,6 +364,35 @@ func (pt *PeerTransport) acceptLoop() {
 			}
 		}
 		go pt.handleQUICConn(qconn)
+	}
+}
+
+// cleanupStaleAckWaiters periodically removes ack waiters that have been
+// pending for longer than the maximum expected timeout.
+func (pt *PeerTransport) cleanupStaleAckWaiters() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			pt.ackMu.Lock()
+			staleCount := len(pt.ackWaiters)
+			if staleCount > 0 {
+				slog.Debug("cleaning up stale ack waiters", "count", staleCount)
+			}
+			for id, ch := range pt.ackWaiters {
+				select {
+				case <-ch:
+					// Already closed, just delete
+				default:
+					close(ch)
+				}
+				delete(pt.ackWaiters, id)
+			}
+			pt.ackMu.Unlock()
+		case <-pt.done:
+			return
+		}
 	}
 }
 

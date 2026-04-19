@@ -30,6 +30,11 @@ func main() {
 	cfg := config.DefaultConfig()
 	applyEnvOverrides(cfg)
 
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
+
 	logging.Init(cfg.LogLevel)
 
 	// Validate TLS config

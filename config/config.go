@@ -1,6 +1,9 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Config holds the broker configuration.
 type Config struct {
@@ -290,4 +293,31 @@ func DefaultConfig() *Config {
 			DrainTimeout: 30 * time.Second,
 		},
 	}
+}
+
+// Validate checks the configuration for common errors and returns
+// a descriptive error if any are found.
+func (c *Config) Validate() error {
+	if c.TCPAddr == "" {
+		return fmt.Errorf("TCPAddr is required")
+	}
+	if c.HTTPAddr == "" {
+		return fmt.Errorf("HTTPAddr is required")
+	}
+	if c.KeepAliveMultiplier < 1.0 {
+		return fmt.Errorf("KeepAliveMultiplier must be >= 1.0, got %f", c.KeepAliveMultiplier)
+	}
+	if c.InflightLimit < 1 {
+		return fmt.Errorf("InflightLimit must be >= 1, got %d", c.InflightLimit)
+	}
+	if c.MaxPacketSize < 1 {
+		return fmt.Errorf("MaxPacketSize must be >= 1, got %d", c.MaxPacketSize)
+	}
+	if c.Cluster.Enabled && c.Cluster.NodeID == "" {
+		return fmt.Errorf("Cluster.NodeID is required when cluster is enabled")
+	}
+	if c.Replication.Enabled && !c.Cluster.Enabled {
+		return fmt.Errorf("Replication requires Cluster to be enabled")
+	}
+	return nil
 }

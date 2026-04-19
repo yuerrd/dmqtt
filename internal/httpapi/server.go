@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sort"
 	"strconv"
@@ -63,6 +64,28 @@ type Server struct {
 	brokerAPI   BrokerAPI
 	clusterAPI  ClusterAPI
 	startTime   time.Time
+	apiKey      string
+}
+
+// SetAPIKey sets the API key required for /api/v1/ endpoints.
+func (s *Server) SetAPIKey(key string) {
+	s.apiKey = key
+}
+
+func (s *Server) authWrap(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.apiKey != "" {
+			key := r.Header.Get("X-API-Key")
+			if key == "" {
+				key = r.URL.Query().Get("api_key")
+			}
+			if key != s.apiKey {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+		}
+		h(w, r)
+	}
 }
 
 // New creates a new HTTP API server.
@@ -73,14 +96,14 @@ func New(addr string, checker ReadinessChecker) *Server {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/ready", s.handleReady)
-	mux.HandleFunc("/api/v1/cluster/devices", s.handleClusterDevices)
-	mux.HandleFunc("/api/v1/cluster/stats", s.handleClusterStats)
-	mux.HandleFunc("/api/v1/cluster/migrations", s.handleMigrations)
-	mux.HandleFunc("/api/v1/cluster/migrations/", s.handleMigrationByID)
-	mux.HandleFunc("/api/v1/devices", s.handleDevices)
-	mux.HandleFunc("/api/v1/devices/", s.handleDeviceByID)
-	mux.HandleFunc("/api/v1/stats", s.handleStats)
-	mux.HandleFunc("/api/v1/nodes", s.handleNodes)
+	mux.HandleFunc("/api/v1/cluster/devices", s.authWrap(s.handleClusterDevices))
+	mux.HandleFunc("/api/v1/cluster/stats", s.authWrap(s.handleClusterStats))
+	mux.HandleFunc("/api/v1/cluster/migrations", s.authWrap(s.handleMigrations))
+	mux.HandleFunc("/api/v1/cluster/migrations/", s.authWrap(s.handleMigrationByID))
+	mux.HandleFunc("/api/v1/devices", s.authWrap(s.handleDevices))
+	mux.HandleFunc("/api/v1/devices/", s.authWrap(s.handleDeviceByID))
+	mux.HandleFunc("/api/v1/stats", s.authWrap(s.handleStats))
+	mux.HandleFunc("/api/v1/nodes", s.authWrap(s.handleNodes))
 	mux.Handle("/admin/", adminHandler())
 
 	s.httpServer = &http.Server{
@@ -275,6 +298,9 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
+	if page > 10000 {
+		page = 10000
+	}
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
 	if perPage < 1 {
 		perPage = 20
@@ -288,7 +314,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	total := len(ids)
 
 	start := (page - 1) * perPage
-	if start > total {
+	if start < 0 || start > total {
 		start = total
 	}
 	end := start + perPage
@@ -560,7 +586,7 @@ func (s *Server) fetchRemoteDevices(node cluster.NodeInfo) []clusterDeviceItem {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB max
 	if err != nil {
 		return nil
 	}
@@ -653,7 +679,7 @@ func (s *Server) fetchRemoteStats(node cluster.NodeInfo) *nodeStats {
 	defer resp.Body.Close()
 
 	var raw map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&raw); err != nil {
 		return nil
 	}
 
@@ -672,11 +698,11 @@ func (s *Server) fetchRemoteStats(node cluster.NodeInfo) *nodeStats {
 // proxyDeviceDetail forwards a device detail request to a remote node.
 // Returns true if the remote node had the device.
 func (s *Server) proxyDeviceDetail(w http.ResponseWriter, node cluster.NodeInfo, deviceID string) bool {
-	url := fmt.Sprintf("http://%s:%d/api/v1/devices/%s", node.Host, node.HTTPPort, deviceID)
+	targetURL := fmt.Sprintf("http://%s:%d/api/v1/devices/%s", node.Host, node.HTTPPort, url.PathEscape(deviceID))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return false
 	}
@@ -690,7 +716,7 @@ func (s *Server) proxyDeviceDetail(w http.ResponseWriter, node cluster.NodeInfo,
 		return false
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB max
 	if err != nil {
 		return false
 	}
@@ -702,11 +728,11 @@ func (s *Server) proxyDeviceDetail(w http.ResponseWriter, node cluster.NodeInfo,
 
 // proxyDeviceDisconnect forwards a disconnect request to a remote node.
 func (s *Server) proxyDeviceDisconnect(w http.ResponseWriter, node cluster.NodeInfo, deviceID string) bool {
-	url := fmt.Sprintf("http://%s:%d/api/v1/devices/%s/disconnect", node.Host, node.HTTPPort, deviceID)
+	targetURL := fmt.Sprintf("http://%s:%d/api/v1/devices/%s/disconnect", node.Host, node.HTTPPort, url.PathEscape(deviceID))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, nil)
 	if err != nil {
 		return false
 	}
@@ -720,7 +746,7 @@ func (s *Server) proxyDeviceDisconnect(w http.ResponseWriter, node cluster.NodeI
 		return false
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10MB max
 	if err != nil {
 		return false
 	}
@@ -729,5 +755,3 @@ func (s *Server) proxyDeviceDisconnect(w http.ResponseWriter, node cluster.NodeI
 	w.Write(body)
 	return true
 }
-
-

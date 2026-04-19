@@ -1,5 +1,6 @@
 bin/
 dmqtt
+docs/
 web/admin/node_modules/
 web/admin/dist/
 internal/httpapi/admin/

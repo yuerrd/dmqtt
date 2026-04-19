@@ -12,6 +12,7 @@ import (
 
 // Session stores per-client state.
 type Session struct {
+	mu               sync.Mutex      `json:"-"`
 	ClientID         string          `json:"clientID"`
 	CleanStart       bool            `json:"cleanStart"`
 	ExpiryInterval   uint32          `json:"expiryInterval"`
@@ -20,6 +21,20 @@ type Session struct {
 	Epoch            uint64          `json:"epoch"`
 	ConnectTimestamp int64           `json:"connectTimestamp"`
 	NodeID           string          `json:"nodeID,omitempty"`
+}
+
+// SetSubscription sets a subscription in a thread-safe manner.
+func (s *Session) SetSubscription(topic string, qos byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Subscriptions[topic] = qos
+}
+
+// RemoveSubscription removes a subscription in a thread-safe manner.
+func (s *Session) RemoveSubscription(topic string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.Subscriptions, topic)
 }
 
 // SessionStore manages client sessions with optional persistence.

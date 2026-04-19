@@ -62,6 +62,7 @@ func New(addr string, store storage.Store) *Broker {
 		clients:       make(map[string]*Client),
 		done:          make(chan struct{}),
 	}
+	b.dedupStore.StartCleanup(30 * time.Second)
 	if store != nil {
 		b.willStore = NewWillStore(store)
 	}
@@ -164,6 +165,8 @@ func (b *Broker) Start() error {
 
 func (b *Broker) Stop() {
 	close(b.done)
+
+	b.dedupStore.Stop()
 
 	if b.reaper != nil {
 		b.reaper.Stop()

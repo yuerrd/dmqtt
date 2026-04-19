@@ -14,12 +14,14 @@ type DedupStore struct {
 	mu      sync.Mutex
 	entries map[string]*dedupEntry
 	ttl     time.Duration
+	done    chan struct{}
 }
 
 func NewDedupStore(ttl time.Duration) *DedupStore {
 	return &DedupStore{
 		entries: make(map[string]*dedupEntry),
 		ttl:     ttl,
+		done:    make(chan struct{}),
 	}
 }
 
@@ -54,4 +56,34 @@ func (d *DedupStore) Remove(clientID string, packetID uint16) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.entries, dedupKey(clientID, packetID))
+}
+
+func (d *DedupStore) StartCleanup(interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				d.cleanup()
+			case <-d.done:
+				return
+			}
+		}
+	}()
+}
+
+func (d *DedupStore) cleanup() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := time.Now()
+	for key, entry := range d.entries {
+		if now.After(entry.ExpiresAt) {
+			delete(d.entries, key)
+		}
+	}
+}
+
+func (d *DedupStore) Stop() {
+	close(d.done)
 }

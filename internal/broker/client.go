@@ -411,7 +411,7 @@ func (c *Client) handleSubscribe(data []byte) {
 
 		c.broker.subscriptions.Add(c.clientID, sub.TopicFilter, grantedQoS)
 		if session != nil {
-			session.Subscriptions[sub.TopicFilter] = grantedQoS
+			session.SetSubscription(sub.TopicFilter, grantedQoS)
 		}
 		returnCodes[i] = grantedQoS
 		if c.broker.cluster != nil {
@@ -468,7 +468,7 @@ func (c *Client) handleUnsubscribe(data []byte) {
 			c.broker.cluster.BroadcastUnsubscribe(filter)
 		}
 		if session != nil {
-			delete(session.Subscriptions, filter)
+			session.RemoveSubscription(filter)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/cel-go/cel"
@@ -17,12 +18,15 @@ type EngineConfig struct {
 	WebhookTimeout time.Duration
 }
 
+const maxHopCount = 5
+
 // Engine manages rules and evaluates messages against them.
 type Engine struct {
 	mu       sync.RWMutex
 	rules    []*compiledRule
 	env      *cel.Env
 	executor *ActionExecutor
+	depth    atomic.Int32
 }
 
 // NewEngine creates a new rule engine.
@@ -87,6 +91,15 @@ func (e *Engine) setRules(rawRules []Rule) error {
 // Evaluate matches the message topic against all rules, evaluates CEL filters,
 // and dispatches actions for matching rules. Actions run asynchronously.
 func (e *Engine) Evaluate(topic string, payload []byte, qos byte, clientID string) {
+	depth := e.depth.Add(1)
+	defer e.depth.Add(-1)
+
+	if depth > maxHopCount {
+		slog.Warn("rule engine: max recursion depth reached, dropping",
+			"topic", topic, "depth", depth)
+		return
+	}
+
 	e.mu.RLock()
 	rules := e.rules
 	e.mu.RUnlock()

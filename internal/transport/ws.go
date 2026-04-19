@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -89,11 +90,12 @@ func (c *wsConn) SetWriteDeadline(t time.Time) error {
 
 // WSListener implements the Listener interface for MQTT over WebSocket.
 type WSListener struct {
-	server   *http.Server
-	connCh   chan net.Conn
-	listener net.Listener
-	upgrader websocket.Upgrader
-	done     chan struct{}
+	server    *http.Server
+	connCh    chan net.Conn
+	listener  net.Listener
+	upgrader  websocket.Upgrader
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 // NewWSListener creates a WebSocket listener on the given address.
@@ -115,7 +117,24 @@ func NewWSListener(addr string, tlsConfig *tls.Config) (*WSListener, error) {
 			Subprotocols:    []string{"mqtt"},
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
-			CheckOrigin:     func(r *http.Request) bool { return true },
+			CheckOrigin: func(r *http.Request) bool {
+				origin := r.Header.Get("Origin")
+				// Allow requests with no origin (non-browser clients)
+				if origin == "" {
+					return true
+				}
+				// Parse origin and compare host exactly to prevent subdomain bypass
+				u, err := url.Parse(origin)
+				if err != nil {
+					slog.Warn("WebSocket origin parse failed", "origin", origin, "error", err)
+					return false
+				}
+				if u.Host == r.Host {
+					return true
+				}
+				slog.Warn("WebSocket origin rejected", "origin", origin, "host", r.Host)
+				return false
+			},
 		},
 		done: make(chan struct{}),
 	}
@@ -180,8 +199,12 @@ func (w *WSListener) Addr() string {
 }
 
 func (w *WSListener) Close() error {
-	close(w.done)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return w.server.Shutdown(ctx)
+	var err error
+	w.closeOnce.Do(func() {
+		close(w.done)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = w.server.Shutdown(ctx)
+	})
+	return err
 }

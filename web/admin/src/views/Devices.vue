@@ -104,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { fetchClusterDevices, fetchDevice, disconnectDevice, type DeviceSummary, type DeviceDetail } from '../api/devices'
@@ -140,7 +140,6 @@ async function loadDevices() {
     const res = await fetchClusterDevices()
     devices.value = res.devices || []
     currentNodeId.value = res.self
-    // Detect cluster mode: more than one unique node_id
     const nodeIds = new Set(devices.value.map(d => d.node_id).filter(Boolean))
     clusterMode.value = nodeIds.size > 1
   } catch {
@@ -149,6 +148,10 @@ async function loadDevices() {
     loading.value = false
   }
 }
+
+// Auto-refresh every 5 seconds
+const pollTimer = setInterval(loadDevices, 5000)
+onUnmounted(() => clearInterval(pollTimer))
 
 function handleRefresh() {
   searchText.value = ''

@@ -13,7 +13,26 @@ export interface Stats {
   gc_pause_total_ns: number
 }
 
+export interface ClusterNodeStats {
+  node_id: string
+  connections: number
+  subscriptions: number
+  retained: number
+}
+
+export interface ClusterStats {
+  nodes: ClusterNodeStats[]
+  total_connections: number
+  total_subscriptions: number
+  self: string
+}
+
 export async function fetchStats(): Promise<Stats> {
   const { data } = await client.get<Stats>('/stats')
+  return data
+}
+
+export async function fetchClusterStats(): Promise<ClusterStats> {
+  const { data } = await client.get<ClusterStats>('/cluster/stats')
   return data
 }

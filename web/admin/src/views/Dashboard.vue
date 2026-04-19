@@ -10,9 +10,25 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- Per-node stats breakdown -->
+    <el-card v-if="clusterNodes.length > 1" style="margin-bottom: 20px">
+      <template #header>各节点概况</template>
+      <el-table :data="clusterNodes" size="small" stripe>
+        <el-table-column prop="node_id" label="节点">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.node_id === selfNodeId ? 'success' : 'info'">{{ row.node_id }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="connections" label="连接数" />
+        <el-table-column prop="subscriptions" label="订阅数" />
+        <el-table-column prop="retained" label="保留消息" />
+      </el-table>
+    </el-card>
+
     <el-row :gutter="16" style="margin-bottom: 20px">
       <el-col :span="12">
-        <el-card header="连接数趋势">
+        <el-card header="连接数趋势（集群）">
           <v-chart :option="connectionsChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
@@ -29,8 +45,8 @@
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="CPU 使用率">
-          <v-chart :option="cpuChartOption" style="height: 250px" autoresize />
+        <el-card header="订阅数趋势（集群）">
+          <v-chart :option="subsChartOption" style="height: 250px" autoresize />
         </el-card>
       </el-col>
     </el-row>
@@ -41,13 +57,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/components'
-import { fetchStats, type Stats } from '../api/stats'
+import { fetchStats, fetchClusterStats, type Stats, type ClusterNodeStats } from '../api/stats'
 import { usePolling } from '../composables/usePolling'
 import { useTimeSeriesBuffer } from '../composables/useTimeSeriesBuffer'
 
@@ -56,14 +72,33 @@ use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, TitleComponent]
 const { data: stats, error } = usePolling(fetchStats, 5000)
 const { points, push } = useTimeSeriesBuffer(60)
 
+const clusterNodes = ref<ClusterNodeStats[]>([])
+const selfNodeId = ref('')
+const totalConnections = ref(0)
+const totalSubscriptions = ref(0)
+
+// Fetch cluster-wide stats
+async function loadClusterStats() {
+  try {
+    const cs = await fetchClusterStats()
+    clusterNodes.value = cs.nodes || []
+    selfNodeId.value = cs.self
+    totalConnections.value = cs.total_connections
+    totalSubscriptions.value = cs.total_subscriptions
+  } catch { /* ignore */ }
+}
+
+loadClusterStats()
+
 watch(stats, (val) => {
   if (!val) return
+  loadClusterStats()
   push({
     time: new Date().toLocaleTimeString(),
-    connected_clients: val.connected_clients,
+    connected_clients: totalConnections.value || val.connected_clients,
+    total_subscriptions: totalSubscriptions.value || val.active_subscriptions,
     memory_alloc_mb: Math.round(val.memory_alloc_bytes / 1024 / 1024),
     goroutines: val.goroutines,
-    uptime_seconds: val.uptime_seconds,
   })
 })
 
@@ -71,10 +106,10 @@ const statCards = computed(() => {
   const s = stats.value
   if (!s) return []
   return [
-    { label: '在线设备', value: s.connected_clients },
-    { label: '活跃订阅', value: s.active_subscriptions },
+    { label: '在线设备（集群）', value: totalConnections.value || s.connected_clients },
+    { label: '活跃订阅（集群）', value: totalSubscriptions.value || s.active_subscriptions },
     { label: '保留消息', value: s.retained_messages },
-    { label: '集群节点', value: s.cluster_nodes },
+    { label: '集群节点', value: clusterNodes.value.length || s.cluster_nodes },
   ]
 })
 
@@ -101,5 +136,5 @@ function makeLineOption(label: string, field: string, unit = '') {
 const connectionsChartOption = makeLineOption('连接数', 'connected_clients')
 const memoryChartOption = makeLineOption('内存', 'memory_alloc_mb', 'MB')
 const goroutineChartOption = makeLineOption('Goroutines', 'goroutines')
-const cpuChartOption = makeLineOption('CPU', 'uptime_seconds', 's')
+const subsChartOption = makeLineOption('订阅数', 'total_subscriptions')
 </script>

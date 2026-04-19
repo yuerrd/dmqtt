@@ -359,6 +359,7 @@ func (b *Broker) RouteMessage(topic string, payload []byte, qos byte) {
 }
 
 func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain bool, forwarded bool) {
+	start := time.Now()
 	matches := b.subscriptions.Match(topic)
 
 	b.mu.RLock()
@@ -396,6 +397,7 @@ func (b *Broker) routeMessage(topic string, payload []byte, qos byte, retain boo
 		}
 	}
 	b.mu.RUnlock()
+	metrics.MessageLatency(qos, time.Since(start))
 
 	// Remote forwarding (only if not already forwarded and cluster is active)
 	if !forwarded && b.cluster != nil {

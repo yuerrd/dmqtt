@@ -2,8 +2,10 @@ package storage
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/langzp/dmqtt/internal/metrics"
 )
 
 type PebbleStore struct {
@@ -19,33 +21,45 @@ func NewPebbleStore(dir string) (*PebbleStore, error) {
 }
 
 func (s *PebbleStore) Get(key []byte) ([]byte, error) {
+	start := time.Now()
 	val, closer, err := s.db.Get(key)
 	if err == pebble.ErrNotFound {
+		metrics.StorageReadLatency("get", time.Since(start))
 		return nil, nil
 	}
 	if err != nil {
+		metrics.StorageReadLatency("get", time.Since(start))
 		return nil, err
 	}
 	defer closer.Close()
 	result := make([]byte, len(val))
 	copy(result, val)
+	metrics.StorageReadLatency("get", time.Since(start))
 	return result, nil
 }
 
 func (s *PebbleStore) Set(key []byte, value []byte) error {
-	return s.db.Set(key, value, pebble.Sync)
+	start := time.Now()
+	err := s.db.Set(key, value, pebble.Sync)
+	metrics.StorageWriteLatency("set", time.Since(start))
+	return err
 }
 
 func (s *PebbleStore) Delete(key []byte) error {
-	return s.db.Delete(key, pebble.Sync)
+	start := time.Now()
+	err := s.db.Delete(key, pebble.Sync)
+	metrics.StorageWriteLatency("delete", time.Since(start))
+	return err
 }
 
 func (s *PebbleStore) Scan(prefix []byte, fn func(key, value []byte) error) error {
+	start := time.Now()
 	iter, err := s.db.NewIter(&pebble.IterOptions{
 		LowerBound: prefix,
 		UpperBound: prefixUpperBound(prefix),
 	})
 	if err != nil {
+		metrics.StorageReadLatency("scan", time.Since(start))
 		return err
 	}
 	defer iter.Close()
@@ -56,9 +70,11 @@ func (s *PebbleStore) Scan(prefix []byte, fn func(key, value []byte) error) erro
 		valCopy := make([]byte, len(iter.Value()))
 		copy(valCopy, iter.Value())
 		if err := fn(keyCopy, valCopy); err != nil {
+			metrics.StorageReadLatency("scan", time.Since(start))
 			return err
 		}
 	}
+	metrics.StorageReadLatency("scan", time.Since(start))
 	return iter.Error()
 }
 

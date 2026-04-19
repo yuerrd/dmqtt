@@ -1,6 +1,11 @@
 package broker
 
-import "sync"
+import (
+	"sync"
+	"time"
+
+	"github.com/langzp/dmqtt/internal/metrics"
+)
 
 // SubscriptionMatch represents a matched subscriber for a topic.
 type SubscriptionMatch struct {
@@ -126,6 +131,7 @@ func (idx *SubscriptionIndex) ClientFilters(clientID string) []string {
 }
 
 func (idx *SubscriptionIndex) Match(topic string) []SubscriptionMatch {
+	start := time.Now()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -145,6 +151,7 @@ func (idx *SubscriptionIndex) Match(topic string) []SubscriptionMatch {
 	for clientID, qos := range best {
 		result = append(result, SubscriptionMatch{ClientID: clientID, QoS: qos})
 	}
+	metrics.TopicMatchDuration(time.Since(start))
 	return result
 }
 

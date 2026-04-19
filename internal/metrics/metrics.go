@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -147,6 +148,38 @@ var (
 		Name: "dmqtt_tenant_messages_rejected_total",
 		Help: "Total messages rejected per tenant.",
 	}, []string{"tenant_id", "reason"})
+	messageLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "mqtt_message_latency_seconds",
+		Help:    "End-to-end message publish-to-deliver latency.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
+	}, []string{"qos"})
+	topicMatchDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "mqtt_topic_match_duration_seconds",
+		Help:    "Time spent matching a topic against the subscription index.",
+		Buckets: []float64{0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01},
+	})
+	storageWriteLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "mqtt_storage_write_latency_seconds",
+		Help:    "Pebble storage write operation latency.",
+		Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1},
+	}, []string{"op"})
+	storageReadLatency = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "mqtt_storage_read_latency_seconds",
+		Help:    "Pebble storage read operation latency.",
+		Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1},
+	}, []string{"op"})
+	cpuUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "mqtt_cpu_usage",
+		Help: "Process CPU usage (user+system time delta per collection interval).",
+	})
+	memorySysBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "mqtt_memory_usage_bytes",
+		Help: "Total bytes of memory obtained from the OS (runtime.MemStats.Sys).",
+	})
+	memoryAllocBytes = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "mqtt_memory_alloc_bytes",
+		Help: "Bytes of allocated heap objects (runtime.MemStats.Alloc).",
+	})
 )
 
 func init() {
@@ -185,6 +218,13 @@ func init() {
 		tenantConnectionsActive,
 		tenantConnectionsRejected,
 		tenantMessagesRejected,
+		messageLatency,
+		topicMatchDuration,
+		storageWriteLatency,
+		storageReadLatency,
+		cpuUsage,
+		memorySysBytes,
+		memoryAllocBytes,
 	)
 }
 
@@ -287,6 +327,7 @@ func collect(provider StatsProvider) {
 	SetSubscriptions(provider.ActiveSubscriptions())
 	SetRetainedMessages(provider.RetainedMessageCount())
 	SetClusterNodes(provider.ClusterNodeCount())
+	collectSystemMetrics()
 }
 
 func MigrationTotal(status string) {
@@ -345,4 +386,55 @@ func TenantConnectionRejected(tenantID string) {
 
 func TenantMessageRejected(tenantID, reason string) {
 	tenantMessagesRejected.WithLabelValues(tenantID, reason).Inc()
+}
+
+func MessageLatency(qos byte, d time.Duration) {
+	messageLatency.WithLabelValues(fmt.Sprintf("%d", qos)).Observe(d.Seconds())
+}
+
+func TopicMatchDuration(d time.Duration) {
+	topicMatchDuration.Observe(d.Seconds())
+}
+
+// StorageWriteLatency records a storage write operation latency.
+// Valid op values: "set", "delete".
+func StorageWriteLatency(op string, d time.Duration) {
+	storageWriteLatency.WithLabelValues(op).Observe(d.Seconds())
+}
+
+// StorageReadLatency records a storage read operation latency.
+// Valid op values: "get", "scan".
+func StorageReadLatency(op string, d time.Duration) {
+	storageReadLatency.WithLabelValues(op).Observe(d.Seconds())
+}
+
+var cpuState struct {
+	mu          sync.Mutex
+	lastCPUTime float64
+	lastCollect time.Time
+}
+
+func collectSystemMetrics() {
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	memorySysBytes.Set(float64(memStats.Sys))
+	memoryAllocBytes.Set(float64(memStats.Alloc))
+
+	totalCPU, ok := cpuTimeSec()
+	if !ok {
+		return
+	}
+
+	cpuState.mu.Lock()
+	defer cpuState.mu.Unlock()
+
+	now := time.Now()
+	if !cpuState.lastCollect.IsZero() {
+		elapsed := now.Sub(cpuState.lastCollect).Seconds()
+		if elapsed > 0 {
+			cpuUsage.Set((totalCPU - cpuState.lastCPUTime) / elapsed)
+		}
+	}
+	cpuState.lastCPUTime = totalCPU
+	cpuState.lastCollect = now
 }

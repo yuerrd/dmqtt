@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -172,4 +173,29 @@ func TestMigrationDuration(t *testing.T) {
 func TestSetMigrationActive(t *testing.T) {
 	SetMigrationActive(3)
 	// No panic = pass
+}
+
+func TestMessageLatency(t *testing.T) {
+	MessageLatency(0, 5*time.Millisecond)
+	MessageLatency(1, 10*time.Millisecond)
+	MessageLatency(2, 100*time.Millisecond)
+}
+
+func TestTopicMatchDuration(t *testing.T) {
+	TopicMatchDuration(50 * time.Microsecond)
+	TopicMatchDuration(1 * time.Millisecond)
+}
+
+func TestStorageWriteLatency(t *testing.T) {
+	StorageWriteLatency("set", 100*time.Microsecond)
+	StorageWriteLatency("delete", 200*time.Microsecond)
+}
+
+func TestStorageReadLatency(t *testing.T) {
+	StorageReadLatency("get", 50*time.Microsecond)
+	StorageReadLatency("scan", 5*time.Millisecond)
+}
+
+func TestCollectSystemMetrics(t *testing.T) {
+	collectSystemMetrics()
 }

@@ -20,8 +20,12 @@
         </div>
       </template>
 
-      <el-table :data="filteredDevices" v-loading="loading" stripe style="width: 100%">
-        <el-table-column prop="client_id" label="设备ID" min-width="150" />
+      <el-table :data="filteredDevices" v-loading="loading" stripe style="width: 100%" @row-click="(row: DeviceSummary) => showDetail(row.client_id)">
+        <el-table-column prop="client_id" label="设备ID" min-width="150">
+          <template #default="{ row }">
+            <span style="color: #409eff; cursor: pointer">{{ row.client_id }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="username" label="用户名" min-width="100" />
         <el-table-column prop="remote_addr" label="IP地址" min-width="140" />
         <el-table-column label="协议版本" width="100">

@@ -124,20 +124,27 @@ func (s *Server) Stop() error {
 	return s.httpServer.Shutdown(ctx)
 }
 
+// writeJSON encodes v as JSON to w, logging any encoding errors.
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Error("failed to encode JSON response", "error", err)
+	}
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.checker != nil && s.checker.IsReady() {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+		writeJSON(w, map[string]string{"status": "ready"})
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"status": "not_ready"})
+		writeJSON(w, map[string]string{"status": "not_ready"})
 	}
 }
 
@@ -160,7 +167,7 @@ func (s *Server) handleMigrations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.coordinator == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "migrations not configured"})
+		writeJSON(w, map[string]string{"error": "migrations not configured"})
 		return
 	}
 
@@ -168,7 +175,7 @@ func (s *Server) handleMigrations(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		migrations := s.coordinator.List()
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(migrations)
+		writeJSON(w, migrations)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
@@ -178,7 +185,7 @@ func (s *Server) handleMigrationByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.coordinator == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "migrations not configured"})
+		writeJSON(w, map[string]string{"error": "migrations not configured"})
 		return
 	}
 
@@ -190,10 +197,10 @@ func (s *Server) handleMigrationByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
 		if s.coordinator.Cancel(id) {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]string{"status": "cancelled"})
+			writeJSON(w, map[string]string{"status": "cancelled"})
 		} else {
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "migration not found"})
+			writeJSON(w, map[string]string{"error": "migration not found"})
 		}
 		return
 	}
@@ -202,11 +209,11 @@ func (s *Server) handleMigrationByID(w http.ResponseWriter, r *http.Request) {
 		m := s.coordinator.Get(id)
 		if m == nil {
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "migration not found"})
+			writeJSON(w, map[string]string{"error": "migration not found"})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(m)
+		writeJSON(w, m)
 		return
 	}
 
@@ -217,7 +224,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.brokerAPI == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		writeJSON(w, map[string]string{"error": "broker API not configured"})
 		return
 	}
 	var memStats runtime.MemStats
@@ -239,7 +246,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"memory_sys_bytes":     memStats.Sys,
 		"gc_pause_total_ns":    memStats.PauseTotalNs,
 	}
-	json.NewEncoder(w).Encode(stats)
+	writeJSON(w, stats)
 }
 
 func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
@@ -253,14 +260,14 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		resp.Self = s.clusterAPI.Self().ID
 		resp.Nodes = s.clusterAPI.Members()
 	}
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.brokerAPI == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		writeJSON(w, map[string]string{"error": "broker API not configured"})
 		return
 	}
 
@@ -328,7 +335,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"devices":  devices,
 		"total":    total,
 		"page":     page,
@@ -341,7 +348,7 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.brokerAPI == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(map[string]string{"error": "broker API not configured"})
+		writeJSON(w, map[string]string{"error": "broker API not configured"})
 		return
 	}
 
@@ -369,11 +376,11 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			w.WriteHeader(http.StatusNotFound)
-			json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
+			writeJSON(w, map[string]string{"error": "device not found"})
 			return
 		}
 		s.brokerAPI.DisconnectDevice(deviceID)
-		json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
+		writeJSON(w, map[string]string{"status": "disconnected"})
 		return
 	}
 
@@ -396,7 +403,7 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "device not found"})
+		writeJSON(w, map[string]string{"error": "device not found"})
 		return
 	}
 
@@ -436,7 +443,7 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	json.NewEncoder(w).Encode(detail)
+	writeJSON(w, detail)
 }
 
 // clusterDeviceItem is used for cluster-wide device aggregation.
@@ -465,7 +472,7 @@ func (s *Server) handleClusterDevices(w http.ResponseWriter, r *http.Request) {
 
 	// If no cluster, return local only
 	if s.clusterAPI == nil {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		writeJSON(w, map[string]interface{}{
 			"devices": localDevices,
 			"total":   len(localDevices),
 			"self":    selfID,
@@ -500,7 +507,7 @@ func (s *Server) handleClusterDevices(w http.ResponseWriter, r *http.Request) {
 		return allDevices[i].ClientID < allDevices[j].ClientID
 	})
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"devices": allDevices,
 		"total":   len(allDevices),
 		"self":    selfID,
@@ -622,7 +629,7 @@ func (s *Server) handleClusterStats(w http.ResponseWriter, r *http.Request) {
 		wg.Wait()
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	writeJSON(w, map[string]interface{}{
 		"nodes":               allStats,
 		"total_connections":   totalConns,
 		"total_subscriptions": totalSubs,

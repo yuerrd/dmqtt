@@ -18,6 +18,7 @@ type ClusterConfig struct {
 	GossipPort    int
 	TransportPort int
 	MQTTPort      int
+	HTTPPort      int
 	Region        string
 	Seeds         []string
 	VirtualNodes  int
@@ -96,6 +97,7 @@ func NewCluster(cfg ClusterConfig) (*Cluster, error) {
 		GossipPort:    cfg.GossipPort,
 		TransportPort: cfg.TransportPort,
 		MQTTPort:      cfg.MQTTPort,
+		HTTPPort:      cfg.HTTPPort,
 		Region:        cfg.Region,
 	}
 

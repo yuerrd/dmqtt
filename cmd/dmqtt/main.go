@@ -4,8 +4,10 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -206,6 +208,10 @@ func main() {
 	}
 
 	if cfg.Cluster.Enabled {
+		httpPort := 0
+		if _, p, err := parseHostPort(cfg.HTTPAddr); err == nil {
+			httpPort = p
+		}
 		clusterCfg := cluster.ClusterConfig{
 			Enabled:       true,
 			Name:          cfg.Cluster.Name,
@@ -214,6 +220,7 @@ func main() {
 			GossipPort:    cfg.Cluster.GossipPort,
 			TransportPort: cfg.Cluster.TransportPort,
 			MQTTPort:      1883,
+			HTTPPort:      httpPort,
 			Seeds:         cfg.Cluster.Seeds,
 			VirtualNodes:  cfg.Cluster.VirtualNodes,
 			ReplicaCount:  cfg.Cluster.ReplicaCount,
@@ -383,4 +390,13 @@ func main() {
 	}
 	b.Stop()
 	fmt.Println("DMQTT stopped")
+}
+
+func parseHostPort(addr string) (string, int, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err := strconv.Atoi(portStr)
+	return host, port, err
 }

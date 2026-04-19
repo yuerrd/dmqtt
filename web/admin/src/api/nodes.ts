@@ -2,7 +2,11 @@ import client from './client'
 
 export interface NodeInfo {
   id: string
-  addr: string
+  host: string
+  gossipPort: number
+  transportPort: number
+  mqttPort: number
+  httpPort: number
   role: string
 }
 

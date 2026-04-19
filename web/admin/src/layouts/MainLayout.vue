@@ -36,6 +36,7 @@
           <Expand v-else />
         </el-icon>
         <span style="margin-left: 16px; font-size: 16px; font-weight: 500">{{ pageTitle }}</span>
+        <el-tag v-if="nodeId" type="success" size="small" style="margin-left: auto">节点: {{ nodeId }}</el-tag>
       </el-header>
       <el-main style="background: #f5f7fa">
         <router-view />
@@ -45,12 +46,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Monitor, Connection, Grid, DataLine, Fold, Expand } from '@element-plus/icons-vue'
+import { fetchStats } from '../api/stats'
 
 const route = useRoute()
 const isCollapsed = ref(false)
+const nodeId = ref('')
+
+onMounted(async () => {
+  try {
+    const stats = await fetchStats()
+    nodeId.value = stats.node_id || ''
+  } catch {}
+})
 
 const titleMap: Record<string, string> = {
   '/': '仪表盘',

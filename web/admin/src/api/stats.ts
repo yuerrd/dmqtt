@@ -1,6 +1,7 @@
 import client from './client'
 
 export interface Stats {
+  node_id: string
   connected_clients: number
   active_subscriptions: number
   retained_messages: number

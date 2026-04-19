@@ -10,9 +10,16 @@
             <span style="font-weight: bold; font-size: 16px">{{ node.id }}</span>
           </div>
           <el-descriptions :column="1" size="small">
-            <el-descriptions-item label="地址">{{ node.addr }}</el-descriptions-item>
-            <el-descriptions-item label="角色">{{ node.role || 'node' }}</el-descriptions-item>
+            <el-descriptions-item label="地址">{{ node.host }}</el-descriptions-item>
+            <el-descriptions-item label="MQTT端口">{{ node.mqttPort }}</el-descriptions-item>
+            <el-descriptions-item label="HTTP端口">{{ node.httpPort || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Gossip">{{ node.gossipPort }}</el-descriptions-item>
           </el-descriptions>
+          <div style="margin-top: 12px" v-if="node.httpPort && node.id !== selfId">
+            <el-button type="primary" size="small" text @click="openNodeAdmin(node)">
+              打开管理界面 →
+            </el-button>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -61,6 +68,10 @@ const nodes = ref<NodeInfo[]>([])
 const selfId = ref('')
 const migrations = ref<Migration[]>([])
 const migLoading = ref(false)
+
+function openNodeAdmin(node: NodeInfo) {
+  window.open(`http://${node.host}:${node.httpPort}/admin/`, '_blank')
+}
 
 function statusTagType(status: string): string {
   const map: Record<string, string> = {

@@ -12,6 +12,7 @@ type NodeInfo struct {
 	GossipPort    int    `json:"gossipPort"`
 	TransportPort int    `json:"transportPort"`
 	MQTTPort      int    `json:"mqttPort"`
+	HTTPPort      int    `json:"httpPort,omitempty"`
 	Region        string `json:"region,omitempty"`
 }
 

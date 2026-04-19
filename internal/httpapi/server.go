@@ -207,7 +207,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
+	nodeID := ""
+	if s.clusterAPI != nil {
+		nodeID = s.clusterAPI.Self().ID
+	}
 	stats := map[string]interface{}{
+		"node_id":              nodeID,
 		"connected_clients":    s.brokerAPI.ClientCount(),
 		"active_subscriptions": s.brokerAPI.ActiveSubscriptions(),
 		"retained_messages":    s.brokerAPI.RetainedMessageCount(),

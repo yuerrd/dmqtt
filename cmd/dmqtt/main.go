@@ -212,6 +212,10 @@ func main() {
 		if _, p, err := parseHostPort(cfg.HTTPAddr); err == nil {
 			httpPort = p
 		}
+		mqttPort := 1883
+		if _, p, err := parseHostPort(cfg.TCPAddr); err == nil {
+			mqttPort = p
+		}
 		clusterCfg := cluster.ClusterConfig{
 			Enabled:       true,
 			Name:          cfg.Cluster.Name,
@@ -219,7 +223,7 @@ func main() {
 			Host:          cfg.Cluster.Host,
 			GossipPort:    cfg.Cluster.GossipPort,
 			TransportPort: cfg.Cluster.TransportPort,
-			MQTTPort:      1883,
+			MQTTPort:      mqttPort,
 			HTTPPort:      httpPort,
 			Seeds:         cfg.Cluster.Seeds,
 			VirtualNodes:  cfg.Cluster.VirtualNodes,

@@ -26,7 +26,19 @@
             <span style="color: #409eff; cursor: pointer">{{ row.client_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="username" label="用户名" min-width="100" />
+        <el-table-column label="所在节点" min-width="100" v-if="clusterMode">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.node_id === currentNodeId ? 'success' : 'info'">{{ row.node_id }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="订阅Topic" min-width="200">
+          <template #default="{ row }">
+            <template v-if="row.subscriptions && row.subscriptions.length">
+              <el-tag v-for="t in row.subscriptions" :key="t" size="small" style="margin: 2px" type="warning">{{ t }}</el-tag>
+            </template>
+            <span v-else style="color: #999">无</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="remote_addr" label="IP地址" min-width="140" />
         <el-table-column label="协议版本" width="100">
           <template #default="{ row }">
@@ -37,9 +49,6 @@
           <template #default="{ row }">
             {{ formatTime(row.connected_at) }}
           </template>
-        </el-table-column>
-        <el-table-column prop="keep_alive" label="KeepAlive" width="100">
-          <template #default="{ row }">{{ row.keep_alive }}s</template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
@@ -104,7 +113,8 @@
 import { ref, computed } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { fetchDevices, fetchDevice, disconnectDevice, type DeviceSummary, type DeviceDetail } from '../api/devices'
+import { fetchDevices, fetchAllNodesDevices, fetchDevice, disconnectDevice, type DeviceSummary, type DeviceDetail } from '../api/devices'
+import { fetchNodes } from '../api/nodes'
 
 const searchText = ref('')
 const currentPage = ref(1)
@@ -112,6 +122,8 @@ const pageSize = 20
 const total = ref(0)
 const devices = ref<DeviceSummary[]>([])
 const loading = ref(false)
+const clusterMode = ref(false)
+const currentNodeId = ref('')
 
 const drawerVisible = ref(false)
 const selectedId = ref('')
@@ -120,7 +132,11 @@ const detailLoading = ref(false)
 
 const filteredDevices = computed(() => {
   if (!searchText.value) return devices.value
-  return devices.value.filter((d) => d.client_id.includes(searchText.value))
+  const q = searchText.value.toLowerCase()
+  return devices.value.filter((d) =>
+    d.client_id.toLowerCase().includes(q) ||
+    (d.subscriptions || []).some(t => t.toLowerCase().includes(q))
+  )
 })
 
 const subscriptionList = computed(() => {
@@ -131,9 +147,24 @@ const subscriptionList = computed(() => {
 async function loadDevices() {
   loading.value = true
   try {
-    const res = await fetchDevices(currentPage.value, pageSize)
-    devices.value = res.devices || []
-    total.value = res.total
+    // Check if cluster mode
+    const nodesRes = await fetchNodes()
+    const nodes = nodesRes.nodes || []
+    currentNodeId.value = nodesRes.self
+    clusterMode.value = nodes.length > 1
+
+    if (clusterMode.value && nodes.some(n => n.httpPort > 0)) {
+      // Aggregate from all nodes
+      const allDevices = await fetchAllNodesDevices(nodes)
+      devices.value = allDevices
+      total.value = allDevices.length
+    } else {
+      // Single node
+      const res = await fetchDevices(currentPage.value, pageSize)
+      devices.value = res.devices || []
+      devices.value.forEach(d => d.node_id = res.node_id)
+      total.value = res.total
+    }
   } catch {
     ElMessage.error('加载设备列表失败')
   } finally {

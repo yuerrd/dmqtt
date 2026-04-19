@@ -69,7 +69,7 @@ func New(addr string, checker ReadinessChecker) *Server {
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      corsMiddleware(mux),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -275,12 +275,18 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	pageIDs := ids[start:end]
 
 	type deviceSummary struct {
-		ClientID        string `json:"client_id"`
-		Username        string `json:"username"`
-		RemoteAddr      string `json:"remote_addr"`
-		ProtocolVersion byte   `json:"protocol_version"`
-		ConnectedAt     string `json:"connected_at"`
-		KeepAlive       int    `json:"keep_alive"`
+		ClientID        string   `json:"client_id"`
+		Username        string   `json:"username"`
+		RemoteAddr      string   `json:"remote_addr"`
+		ProtocolVersion byte     `json:"protocol_version"`
+		ConnectedAt     string   `json:"connected_at"`
+		KeepAlive       int      `json:"keep_alive"`
+		Subscriptions   []string `json:"subscriptions"`
+	}
+
+	nodeID := ""
+	if s.clusterAPI != nil {
+		nodeID = s.clusterAPI.Self().ID
 	}
 
 	devices := make([]deviceSummary, 0, len(pageIDs))
@@ -289,6 +295,12 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		if info == nil {
 			continue
 		}
+		var subs []string
+		if sess := s.brokerAPI.GetSessionData(id); sess != nil {
+			for topic := range sess.Subscriptions {
+				subs = append(subs, topic)
+			}
+		}
 		devices = append(devices, deviceSummary{
 			ClientID:        info.ClientID,
 			Username:        info.Username,
@@ -296,6 +308,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 			ProtocolVersion: info.ProtocolVersion,
 			ConnectedAt:     info.ConnectedAt.UTC().Format("2006-01-02T15:04:05Z"),
 			KeepAlive:       int(info.KeepAlive.Seconds()),
+			Subscriptions:   subs,
 		})
 	}
 
@@ -304,6 +317,7 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 		"total":    total,
 		"page":     page,
 		"per_page": perPage,
+		"node_id":  nodeID,
 	})
 }
 
@@ -385,4 +399,20 @@ func (s *Server) handleDeviceByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(detail)
+}
+
+// corsMiddleware adds CORS headers for cross-node admin dashboard requests.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/yuerrd/dmqtt/internal/circuitbreaker"
@@ -39,6 +40,11 @@ func (e *Executor) Run(parent context.Context, fn func(ctx context.Context) erro
 
 	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("interceptor panic: %v", r)
+			}
+		}()
 		done <- fn(ctx)
 	}()
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/yuerrd/dmqtt/internal/metrics"
@@ -31,6 +32,7 @@ type AuditInterceptor struct {
 	backupPath string
 	logger     *slog.Logger
 	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 // New creates a new AuditInterceptor.
@@ -57,8 +59,10 @@ func (a *AuditInterceptor) Init() error {
 }
 
 func (a *AuditInterceptor) Close() error {
-	close(a.done)
-	// Drain remaining entries
+	a.closeOnce.Do(func() {
+		close(a.done)
+	})
+	// Drain remaining entries after consumeLoop exits
 	for {
 		select {
 		case entry := <-a.entries:

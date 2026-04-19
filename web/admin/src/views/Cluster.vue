@@ -87,7 +87,8 @@ async function loadMigrations() {
   try {
     migrations.value = await fetchMigrations()
   } catch {
-    ElMessage.error('加载迁移任务失败')
+    // standalone mode returns 503; silently show empty list
+    migrations.value = []
   } finally {
     migLoading.value = false
   }

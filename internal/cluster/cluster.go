@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/memberlist"
@@ -52,7 +53,7 @@ type Cluster struct {
 	forwardHandler       func(ForwardMessage)
 	localFiltersProvider func() []string
 	localDevicesProvider func() []string
-	onRemoteConnect      func(deviceID, nodeID string)
+	onRemoteConnect      atomic.Value // stores func(deviceID, nodeID string)
 
 	replicator      *Replicator
 	takeoverManager *TakeoverManager
@@ -286,10 +287,10 @@ func (c *Cluster) TriggerMigration(toNode string, deviceIDs []string) (*ShardMig
 
 // Stop gracefully leaves the cluster and shuts down.
 func (c *Cluster) Stop() error {
-	close(c.done)
 	if c.transport != nil {
 		c.transport.Stop()
 	}
+	close(c.done)
 	return c.membership.Leave(5 * time.Second)
 }
 
@@ -357,8 +358,10 @@ func (c *Cluster) handleBroadcastMsg(data []byte) {
 			return
 		}
 		HandleConnBroadcast(c.connections, msg)
-		if msg.Type == "conn" && c.onRemoteConnect != nil {
-			c.onRemoteConnect(msg.DeviceID, msg.NodeID)
+		if msg.Type == "conn" {
+			if fn, ok := c.onRemoteConnect.Load().(func(string, string)); ok && fn != nil {
+				fn(msg.DeviceID, msg.NodeID)
+			}
 		}
 	default:
 		slog.Warn("cluster: unknown broadcast type", "type", peek.Type)
@@ -428,7 +431,7 @@ func (c *Cluster) BroadcastDisconnect(deviceID string) {
 // SetRemoteConnectHandler sets the callback invoked when a remote node
 // claims a device. The broker uses this to disconnect the local session.
 func (c *Cluster) SetRemoteConnectHandler(fn func(deviceID, nodeID string)) {
-	c.onRemoteConnect = fn
+	c.onRemoteConnect.Store(fn)
 }
 
 // SetLocalDevicesProvider sets a function that returns locally connected device IDs.

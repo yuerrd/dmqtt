@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"math/big"
@@ -215,7 +216,7 @@ type PeerTransport struct {
 
 	// ackWaiters tracks pending ACK channels by message ID
 	ackMu      sync.Mutex
-	ackWaiters map[uint64]chan struct{}
+	ackWaiters map[uint64]*ackWaiter
 
 	// cbConfig stores the circuit breaker configuration for new peers
 	cbConfig *circuitbreaker.Config
@@ -223,6 +224,18 @@ type PeerTransport struct {
 	migrateHandler func(MigrateDataMessage)
 
 	registry *HandlerRegistry
+}
+
+type ackWaiter struct {
+	ch        chan struct{}
+	createdAt time.Time
+}
+
+func migrationAckKey(deviceID string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte("migrate:"))
+	h.Write([]byte(deviceID))
+	return h.Sum64()
 }
 
 type peerConn struct {
@@ -289,7 +302,7 @@ func NewPeerTransport(listenAddr, selfID string, handler func(ForwardMessage)) (
 		handler:      handler,
 		peers:        make(map[string]*peerConn),
 		done:         make(chan struct{}),
-		ackWaiters:   make(map[uint64]chan struct{}),
+		ackWaiters:   make(map[uint64]*ackWaiter),
 		registry:     NewHandlerRegistry(),
 	}
 
@@ -372,22 +385,26 @@ func (pt *PeerTransport) acceptLoop() {
 func (pt *PeerTransport) cleanupStaleAckWaiters() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	maxAge := 2 * time.Minute
 	for {
 		select {
 		case <-ticker.C:
 			pt.ackMu.Lock()
-			staleCount := len(pt.ackWaiters)
-			if staleCount > 0 {
-				slog.Debug("cleaning up stale ack waiters", "count", staleCount)
-			}
-			for id, ch := range pt.ackWaiters {
-				select {
-				case <-ch:
-					// Already closed, just delete
-				default:
-					close(ch)
+			now := time.Now()
+			staleCount := 0
+			for id, w := range pt.ackWaiters {
+				if now.Sub(w.createdAt) > maxAge {
+					select {
+					case <-w.ch:
+					default:
+						close(w.ch)
+					}
+					delete(pt.ackWaiters, id)
+					staleCount++
 				}
-				delete(pt.ackWaiters, id)
+			}
+			if staleCount > 0 {
+				slog.Debug("cleaned up stale ack waiters", "count", staleCount)
 			}
 			pt.ackMu.Unlock()
 		case <-pt.done:
@@ -462,8 +479,8 @@ func (pt *PeerTransport) handleConn(conn io.ReadWriteCloser) {
 			var ack ForwardAckMessage
 			json.Unmarshal(data, &ack)
 			pt.ackMu.Lock()
-			if ch, ok := pt.ackWaiters[ack.ID]; ok {
-				close(ch)
+			if w, ok := pt.ackWaiters[ack.ID]; ok {
+				close(w.ch)
 				delete(pt.ackWaiters, ack.ID)
 			}
 			pt.ackMu.Unlock()
@@ -483,12 +500,9 @@ func (pt *PeerTransport) handleConn(conn io.ReadWriteCloser) {
 			var ack MigrateAckMessage
 			json.Unmarshal(data, &ack)
 			pt.ackMu.Lock()
-			key := uint64(0)
-			for _, b := range []byte(ack.DeviceID) {
-				key = key*31 + uint64(b)
-			}
-			if ch, ok := pt.ackWaiters[key]; ok {
-				close(ch)
+			key := migrationAckKey(ack.DeviceID)
+			if w, ok := pt.ackWaiters[key]; ok {
+				close(w.ch)
 				delete(pt.ackWaiters, key)
 			}
 			pt.ackMu.Unlock()
@@ -675,7 +689,7 @@ func (pt *PeerTransport) SendReliable(nodeID string, msg ForwardMessage, maxRetr
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		ackCh := make(chan struct{})
 		pt.ackMu.Lock()
-		pt.ackWaiters[msg.ID] = ackCh
+		pt.ackWaiters[msg.ID] = &ackWaiter{ch: ackCh, createdAt: time.Now()}
 		pt.ackMu.Unlock()
 
 		err := pt.Send(nodeID, msg)
@@ -727,13 +741,10 @@ func (pt *PeerTransport) SendMigrate(nodeID string, msg MigrateDataMessage) erro
 	}
 
 	// Register ACK waiter using deviceID hash
-	key := uint64(0)
-	for _, b := range []byte(msg.DeviceID) {
-		key = key*31 + uint64(b)
-	}
+	key := migrationAckKey(msg.DeviceID)
 	ackCh := make(chan struct{})
 	pt.ackMu.Lock()
-	pt.ackWaiters[key] = ackCh
+	pt.ackWaiters[key] = &ackWaiter{ch: ackCh, createdAt: time.Now()}
 	pt.ackMu.Unlock()
 
 	pc.mu.Lock()

@@ -12,6 +12,14 @@ import (
 	"github.com/yuerrd/dmqtt/internal/cluster"
 )
 
+// extractPort parses the port number from a "host:port" address string.
+func extractPort(addr string) int {
+	parts := strings.Split(addr, ":")
+	var port int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &port)
+	return port
+}
+
 type mockChecker struct {
 	ready bool
 }
@@ -990,9 +998,7 @@ func TestHandleClusterDevices_FetchRemoteDevices(t *testing.T) {
 	defer remoteSrv.Stop()
 
 	// Parse the remote port
-	remoteAddr := remoteSrv.Addr()
-	var remotePort int
-	fmt.Sscanf(strings.Split(remoteAddr, ":")[len(strings.Split(remoteAddr, ":"))-1], "%d", &remotePort)
+	remotePort := extractPort(remoteSrv.Addr())
 
 	// Local server with cluster API pointing to the remote
 	localMock := newTestMock()
@@ -1038,9 +1044,7 @@ func TestHandleClusterStats_FetchRemoteStats(t *testing.T) {
 	defer remoteSrv.Stop()
 
 	// Parse the remote port
-	remoteAddr := remoteSrv.Addr()
-	var remotePort int
-	fmt.Sscanf(strings.Split(remoteAddr, ":")[len(strings.Split(remoteAddr, ":"))-1], "%d", &remotePort)
+	remotePort := extractPort(remoteSrv.Addr())
 
 	localMock := newTestMock() // 3 clients
 	clusterMock := &mockClusterAPI{

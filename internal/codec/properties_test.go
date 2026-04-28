@@ -194,6 +194,187 @@ func TestEncodeDecodeNilProperties(t *testing.T) {
 	}
 }
 
+func TestDecodeProperties_AllScalarTypes(t *testing.T) {
+	maxQoS := byte(2)
+	retainAvail := byte(1)
+	maxPktSize := uint32(65536)
+	assignedClientID := "auto-assigned-id"
+	topicAliasMax := uint16(10)
+	wildcardAvail := byte(1)
+	subIDAvail := byte(1)
+	sharedSubAvail := byte(0)
+	serverKeepAlive := uint16(30)
+	serverRef := "mqtt.example.com"
+	responseInfo := "response-topic-prefix"
+
+	p := &Properties{
+		MaximumQoS:               &maxQoS,
+		RetainAvailable:          &retainAvail,
+		MaximumPacketSize:        &maxPktSize,
+		AssignedClientIdentifier: &assignedClientID,
+		TopicAliasMaximum:        &topicAliasMax,
+		WildcardSubAvailable:     &wildcardAvail,
+		SubIdentifierAvailable:   &subIDAvail,
+		SharedSubAvailable:       &sharedSubAvail,
+		ServerKeepAlive:          &serverKeepAlive,
+		ServerReference:          &serverRef,
+		ResponseInformation:      &responseInfo,
+	}
+	encoded := p.Encode()
+
+	propLen, n, err := decodeVarInt(encoded, 0)
+	if err != nil {
+		t.Fatalf("decodeVarInt: %v", err)
+	}
+	decoded, err := DecodeProperties(encoded[n:], propLen)
+	if err != nil {
+		t.Fatalf("DecodeProperties: %v", err)
+	}
+	if decoded.MaximumQoS == nil || *decoded.MaximumQoS != maxQoS {
+		t.Errorf("MaximumQoS mismatch")
+	}
+	if decoded.RetainAvailable == nil || *decoded.RetainAvailable != retainAvail {
+		t.Errorf("RetainAvailable mismatch")
+	}
+	if decoded.MaximumPacketSize == nil || *decoded.MaximumPacketSize != maxPktSize {
+		t.Errorf("MaximumPacketSize mismatch")
+	}
+	if decoded.AssignedClientIdentifier == nil || *decoded.AssignedClientIdentifier != assignedClientID {
+		t.Errorf("AssignedClientIdentifier mismatch")
+	}
+	if decoded.TopicAliasMaximum == nil || *decoded.TopicAliasMaximum != topicAliasMax {
+		t.Errorf("TopicAliasMaximum mismatch")
+	}
+	if decoded.WildcardSubAvailable == nil || *decoded.WildcardSubAvailable != wildcardAvail {
+		t.Errorf("WildcardSubAvailable mismatch")
+	}
+	if decoded.SubIdentifierAvailable == nil || *decoded.SubIdentifierAvailable != subIDAvail {
+		t.Errorf("SubIdentifierAvailable mismatch")
+	}
+	if decoded.SharedSubAvailable == nil || *decoded.SharedSubAvailable != sharedSubAvail {
+		t.Errorf("SharedSubAvailable mismatch")
+	}
+	if decoded.ServerKeepAlive == nil || *decoded.ServerKeepAlive != serverKeepAlive {
+		t.Errorf("ServerKeepAlive mismatch")
+	}
+	if decoded.ServerReference == nil || *decoded.ServerReference != serverRef {
+		t.Errorf("ServerReference mismatch")
+	}
+	if decoded.ResponseInformation == nil || *decoded.ResponseInformation != responseInfo {
+		t.Errorf("ResponseInformation mismatch")
+	}
+}
+
+func TestDecodeProperties_PublishProperties(t *testing.T) {
+	msgExpiry := uint32(60)
+	topicAlias := uint16(5)
+	responseTopic := "response/topic"
+	corrData := []byte{0x01, 0x02, 0x03}
+	contentType := "application/json"
+	subID := uint32(42)
+	formatIndicator := byte(1)
+
+	p := &Properties{
+		MessageExpiryInterval:  &msgExpiry,
+		TopicAlias:             &topicAlias,
+		ResponseTopic:          &responseTopic,
+		CorrelationData:        corrData,
+		ContentType:            &contentType,
+		SubscriptionIdentifier: &subID,
+		PayloadFormatIndicator: &formatIndicator,
+	}
+	encoded := p.Encode()
+
+	propLen, n, err := decodeVarInt(encoded, 0)
+	if err != nil {
+		t.Fatalf("decodeVarInt: %v", err)
+	}
+	decoded, err := DecodeProperties(encoded[n:], propLen)
+	if err != nil {
+		t.Fatalf("DecodeProperties: %v", err)
+	}
+	if decoded.MessageExpiryInterval == nil || *decoded.MessageExpiryInterval != msgExpiry {
+		t.Errorf("MessageExpiryInterval mismatch")
+	}
+	if decoded.TopicAlias == nil || *decoded.TopicAlias != topicAlias {
+		t.Errorf("TopicAlias mismatch")
+	}
+	if decoded.ResponseTopic == nil || *decoded.ResponseTopic != responseTopic {
+		t.Errorf("ResponseTopic mismatch")
+	}
+	if !bytes.Equal(decoded.CorrelationData, corrData) {
+		t.Errorf("CorrelationData mismatch")
+	}
+	if decoded.ContentType == nil || *decoded.ContentType != contentType {
+		t.Errorf("ContentType mismatch")
+	}
+	if decoded.SubscriptionIdentifier == nil || *decoded.SubscriptionIdentifier != subID {
+		t.Errorf("SubscriptionIdentifier mismatch")
+	}
+	if decoded.PayloadFormatIndicator == nil || *decoded.PayloadFormatIndicator != formatIndicator {
+		t.Errorf("PayloadFormatIndicator mismatch")
+	}
+}
+
+func TestDecodeProperties_AuthAndWill(t *testing.T) {
+	authMethod := "SCRAM-SHA-256"
+	authData := []byte{0xAB, 0xCD}
+	willDelay := uint32(10)
+	reqProblemInfo := byte(1)
+	reqResponseInfo := byte(0)
+
+	p := &Properties{
+		AuthenticationMethod: &authMethod,
+		AuthenticationData:   authData,
+		WillDelayInterval:    &willDelay,
+		RequestProblemInfo:   &reqProblemInfo,
+		RequestResponseInfo:  &reqResponseInfo,
+	}
+	encoded := p.Encode()
+
+	propLen, n, err := decodeVarInt(encoded, 0)
+	if err != nil {
+		t.Fatalf("decodeVarInt: %v", err)
+	}
+	decoded, err := DecodeProperties(encoded[n:], propLen)
+	if err != nil {
+		t.Fatalf("DecodeProperties: %v", err)
+	}
+	if decoded.AuthenticationMethod == nil || *decoded.AuthenticationMethod != authMethod {
+		t.Errorf("AuthenticationMethod mismatch")
+	}
+	if !bytes.Equal(decoded.AuthenticationData, authData) {
+		t.Errorf("AuthenticationData mismatch")
+	}
+	if decoded.WillDelayInterval == nil || *decoded.WillDelayInterval != willDelay {
+		t.Errorf("WillDelayInterval mismatch")
+	}
+	if decoded.RequestProblemInfo == nil || *decoded.RequestProblemInfo != reqProblemInfo {
+		t.Errorf("RequestProblemInfo mismatch")
+	}
+	if decoded.RequestResponseInfo == nil || *decoded.RequestResponseInfo != reqResponseInfo {
+		t.Errorf("RequestResponseInfo mismatch")
+	}
+}
+
+func TestDecodeProperties_UnknownIdentifier(t *testing.T) {
+	// Use an undefined property ID (e.g. 0xFF)
+	data := []byte{0xFF, 0x00}
+	_, err := DecodeProperties(data, len(data))
+	if err == nil {
+		t.Fatal("expected error for unknown property identifier")
+	}
+}
+
+func TestDecodeProperties_LengthExceedsData(t *testing.T) {
+	// Claim property length is larger than available data
+	data := []byte{0x11, 0x00}
+	_, err := DecodeProperties(data, 100)
+	if err == nil {
+		t.Fatal("expected error when property length exceeds available data")
+	}
+}
+
 func TestVarIntRoundTrip(t *testing.T) {
 	tests := []int{0, 1, 127, 128, 16383, 16384, 2097151, 2097152, 268435455}
 	for _, v := range tests {

@@ -199,3 +199,67 @@ func TestStorageReadLatency(t *testing.T) {
 func TestCollectSystemMetrics(t *testing.T) {
 	collectSystemMetrics()
 }
+
+func TestInterceptorMetrics(t *testing.T) {
+	InterceptorDuration("my-plugin", "OnConnect", 0.005)
+	InterceptorError("my-plugin", "OnConnect")
+	InterceptorSkipped("my-plugin")
+}
+
+func TestAuditMetrics(t *testing.T) {
+	AuditEntry("connect")
+	AuditEntry("disconnect")
+	AuditDropped()
+}
+
+func TestRuleMetrics(t *testing.T) {
+	RuleEvaluation()
+	RuleMatch()
+	RuleAction()
+	RuleActionError()
+	RuleActionDropped()
+}
+
+func TestTenantMetrics(t *testing.T) {
+	TenantConnectionOpened("tenant-1")
+	TenantConnectionOpened("tenant-1")
+	TenantConnectionClosed("tenant-1")
+	TenantConnectionRejected("tenant-1")
+	TenantMessageRejected("tenant-1", "rate_limit")
+}
+
+func TestTenantMetrics_Overflow(t *testing.T) {
+	// Push tenantRegistry beyond maxCount to trigger overflow path.
+	tenantRegistry.mu.Lock()
+	original := tenantRegistry.tenants
+	tenantRegistry.tenants = make(map[string]struct{})
+	tenantRegistry.maxCount = 2
+	tenantRegistry.mu.Unlock()
+
+	// Register up to max
+	TenantConnectionOpened("t-overflow-1")
+	TenantConnectionOpened("t-overflow-2")
+	// This should hit __overflow__ path
+	TenantConnectionOpened("t-overflow-3")
+	TenantConnectionRejected("t-overflow-4")
+	TenantConnectionClosed("t-overflow-5")
+	TenantMessageRejected("t-overflow-6", "rate_limit")
+
+	// Restore
+	tenantRegistry.mu.Lock()
+	tenantRegistry.tenants = original
+	tenantRegistry.maxCount = 1000
+	tenantRegistry.mu.Unlock()
+}
+
+func TestStartCollector(t *testing.T) {
+	p := &mockProvider{subs: 10, retain: 2, cluster: 1}
+	done := make(chan struct{})
+	StartCollector(p, done)
+	// Give the initial collection a moment to run
+	time.Sleep(20 * time.Millisecond)
+	close(done)
+	// Let goroutine exit
+	time.Sleep(20 * time.Millisecond)
+	// No panic = pass
+}

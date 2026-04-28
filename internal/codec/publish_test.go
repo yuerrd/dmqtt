@@ -283,3 +283,153 @@ func TestPubackEncodeV31Unchanged(t *testing.T) {
 		t.Errorf("v3.1.1 PubackPacket.Encode() = %v, want %v", data, expected)
 	}
 }
+
+func TestPubrecEncodeDecodeV5WithReason(t *testing.T) {
+	reason := "packet id in use"
+	pkt := &PubrecPacket{
+		PacketID:        77,
+		ReasonCode:      0x91, // Packet Identifier In Use
+		Properties:      &Properties{ReasonString: &reason},
+		ProtocolVersion: 5,
+	}
+	data := pkt.Encode()
+
+	decoded, err := DecodePubrecPacket(data[2:], 5)
+	if err != nil {
+		t.Fatalf("DecodePubrecPacket error: %v", err)
+	}
+	if decoded.PacketID != 77 {
+		t.Errorf("PacketID = %d, want 77", decoded.PacketID)
+	}
+	if decoded.ReasonCode != 0x91 {
+		t.Errorf("ReasonCode = 0x%02X, want 0x91", decoded.ReasonCode)
+	}
+	if decoded.Properties == nil || decoded.Properties.ReasonString == nil {
+		t.Fatal("ReasonString not decoded")
+	}
+	if *decoded.Properties.ReasonString != reason {
+		t.Errorf("ReasonString = %q, want %q", *decoded.Properties.ReasonString, reason)
+	}
+}
+
+func TestPubrecEncodeV5Success(t *testing.T) {
+	pkt := &PubrecPacket{PacketID: 10, ReasonCode: 0x00, ProtocolVersion: 5}
+	data := pkt.Encode()
+	// V5 success with no properties → same as v3.1.1 (just PacketID)
+	if data[0] != 0x50 {
+		t.Errorf("First byte = 0x%02X, want 0x50", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+}
+
+func TestPubrelEncodeDecodeV5WithReason(t *testing.T) {
+	reason := "pubrel reason"
+	pkt := &PubrelPacket{
+		PacketID:        88,
+		ReasonCode:      0x92, // Packet Identifier Not Found
+		Properties:      &Properties{ReasonString: &reason},
+		ProtocolVersion: 5,
+	}
+	data := pkt.Encode()
+
+	decoded, err := DecodePubrelPacket(data[2:], 5)
+	if err != nil {
+		t.Fatalf("DecodePubrelPacket error: %v", err)
+	}
+	if decoded.PacketID != 88 {
+		t.Errorf("PacketID = %d, want 88", decoded.PacketID)
+	}
+	if decoded.ReasonCode != 0x92 {
+		t.Errorf("ReasonCode = 0x%02X, want 0x92", decoded.ReasonCode)
+	}
+	if decoded.Properties == nil || decoded.Properties.ReasonString == nil {
+		t.Fatal("ReasonString not decoded")
+	}
+}
+
+func TestPubrelEncodeV5Success(t *testing.T) {
+	pkt := &PubrelPacket{PacketID: 5, ReasonCode: 0x00, ProtocolVersion: 5}
+	data := pkt.Encode()
+	if data[0] != 0x62 {
+		t.Errorf("First byte = 0x%02X, want 0x62", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+}
+
+func TestPubcompEncodeDecodeV5WithReason(t *testing.T) {
+	reason := "pubcomp reason"
+	pkt := &PubcompPacket{
+		PacketID:        99,
+		ReasonCode:      0x92,
+		Properties:      &Properties{ReasonString: &reason},
+		ProtocolVersion: 5,
+	}
+	data := pkt.Encode()
+
+	decoded, err := DecodePubcompPacket(data[2:], 5)
+	if err != nil {
+		t.Fatalf("DecodePubcompPacket error: %v", err)
+	}
+	if decoded.PacketID != 99 {
+		t.Errorf("PacketID = %d, want 99", decoded.PacketID)
+	}
+	if decoded.ReasonCode != 0x92 {
+		t.Errorf("ReasonCode = 0x%02X, want 0x92", decoded.ReasonCode)
+	}
+	if decoded.Properties == nil || decoded.Properties.ReasonString == nil {
+		t.Fatal("ReasonString not decoded")
+	}
+}
+
+func TestPubcompEncodeV5Success(t *testing.T) {
+	pkt := &PubcompPacket{PacketID: 1, ReasonCode: 0x00, ProtocolVersion: 5}
+	data := pkt.Encode()
+	if data[0] != 0x70 {
+		t.Errorf("First byte = 0x%02X, want 0x70", data[0])
+	}
+	if data[1] != 0x02 {
+		t.Errorf("Remaining length = %d, want 2", data[1])
+	}
+}
+
+func TestDecodePubackPacket_TooShort(t *testing.T) {
+	_, err := DecodePubackPacket([]byte{0x00}, 4)
+	if err == nil {
+		t.Fatal("expected error for too-short PUBACK data")
+	}
+}
+
+func TestDecodePubrecPacket_TooShort(t *testing.T) {
+	_, err := DecodePubrecPacket([]byte{0x00}, 4)
+	if err == nil {
+		t.Fatal("expected error for too-short PUBREC data")
+	}
+}
+
+func TestDecodePubrelPacket_TooShort(t *testing.T) {
+	_, err := DecodePubrelPacket([]byte{0x00}, 4)
+	if err == nil {
+		t.Fatal("expected error for too-short PUBREL data")
+	}
+}
+
+func TestDecodePubcompPacket_TooShort(t *testing.T) {
+	_, err := DecodePubcompPacket([]byte{0x00}, 4)
+	if err == nil {
+		t.Fatal("expected error for too-short PUBCOMP data")
+	}
+}
+
+func TestDecodePublishPacket_MissingPacketID(t *testing.T) {
+	var buf bytes.Buffer
+	writeUTF8String(&buf, "t/1")
+	// QoS=1 but no packet ID bytes
+	_, err := DecodePublishPacket(buf.Bytes(), 1, 4)
+	if err == nil {
+		t.Fatal("expected error for missing packet ID in QoS 1 PUBLISH")
+	}
+}

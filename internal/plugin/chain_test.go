@@ -126,3 +126,151 @@ func TestChain_InitAndClose(t *testing.T) {
 		t.Fatalf("CloseAll failed: %v", err)
 	}
 }
+
+// --- Additional interceptor types for new hook tests ---
+
+type connectRecorder struct {
+	name   string
+	events []*ConnectEvent
+}
+
+func (c *connectRecorder) Name() string { return c.name }
+func (c *connectRecorder) Init() error  { return nil }
+func (c *connectRecorder) Close() error { return nil }
+func (c *connectRecorder) OnConnect(_ context.Context, evt *ConnectEvent) error {
+	c.events = append(c.events, evt)
+	return nil
+}
+
+type deliveryRecorder struct {
+	name   string
+	topics []string
+}
+
+func (d *deliveryRecorder) Name() string { return d.name }
+func (d *deliveryRecorder) Init() error  { return nil }
+func (d *deliveryRecorder) Close() error { return nil }
+func (d *deliveryRecorder) OnDelivery(_ context.Context, evt *DeliveryEvent) error {
+	d.topics = append(d.topics, evt.Topic)
+	return nil
+}
+
+type unsubRecorder struct {
+	name    string
+	filters []string
+}
+
+func (u *unsubRecorder) Name() string { return u.name }
+func (u *unsubRecorder) Init() error  { return nil }
+func (u *unsubRecorder) Close() error { return nil }
+func (u *unsubRecorder) OnUnsubscribe(_ context.Context, evt *UnsubscribeEvent) error {
+	u.filters = append(u.filters, evt.TopicFilter)
+	return nil
+}
+
+type sessionExpiredRecorder struct {
+	count atomic.Int32
+}
+
+func (s *sessionExpiredRecorder) Name() string { return "session-expired-recorder" }
+func (s *sessionExpiredRecorder) Init() error  { return nil }
+func (s *sessionExpiredRecorder) Close() error { return nil }
+func (s *sessionExpiredRecorder) OnSessionExpired(_ *SessionExpiredEvent) {
+	s.count.Add(1)
+}
+
+// --- Tests for new hooks ---
+
+func TestChain_OnConnect(t *testing.T) {
+	chain := NewInterceptorChain()
+	rec := &connectRecorder{name: "connect-rec"}
+	chain.Register(rec)
+
+	evt := &ConnectEvent{ClientID: "c1", Username: "user1"}
+	if err := chain.OnConnect(context.Background(), evt); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.events) != 1 || rec.events[0].ClientID != "c1" {
+		t.Fatalf("OnConnect not called correctly, got %v", rec.events)
+	}
+}
+
+func TestChain_OnDelivery(t *testing.T) {
+	chain := NewInterceptorChain()
+	rec := &deliveryRecorder{name: "delivery-rec"}
+	chain.Register(rec)
+
+	evt := &DeliveryEvent{ClientID: "c1", Topic: "sensor/temp", Payload: []byte("25"), QoS: 0}
+	if err := chain.OnDelivery(context.Background(), evt); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.topics) != 1 || rec.topics[0] != "sensor/temp" {
+		t.Fatalf("OnDelivery not called correctly, got %v", rec.topics)
+	}
+}
+
+func TestChain_OnUnsubscribe(t *testing.T) {
+	chain := NewInterceptorChain()
+	rec := &unsubRecorder{name: "unsub-rec"}
+	chain.Register(rec)
+
+	evt := &UnsubscribeEvent{ClientID: "c1", TopicFilter: "sensor/#"}
+	if err := chain.OnUnsubscribe(context.Background(), evt); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.filters) != 1 || rec.filters[0] != "sensor/#" {
+		t.Fatalf("OnUnsubscribe not called correctly, got %v", rec.filters)
+	}
+}
+
+func TestChain_OnSessionExpired_Async(t *testing.T) {
+	chain := NewInterceptorChain()
+	rec := &sessionExpiredRecorder{}
+	chain.Register(rec)
+
+	chain.OnSessionExpired(&SessionExpiredEvent{ClientID: "c1"})
+	time.Sleep(50 * time.Millisecond)
+	if rec.count.Load() != 1 {
+		t.Fatalf("expected 1 session-expired call, got %d", rec.count.Load())
+	}
+}
+
+func TestChain_WithOptions(t *testing.T) {
+	chain := NewInterceptorChain()
+	r := &recordingInterceptor{name: "r1"}
+	chain.Register(r,
+		WithTimeout(200*time.Millisecond),
+		WithBreakerThreshold(0.8),
+		WithBreakerResetInterval(60*time.Second),
+	)
+
+	// Just verify registration succeeds and dispatching works
+	if err := chain.OnPublish(context.Background(), &PublishEvent{Topic: "t/1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(r.published) != 1 {
+		t.Fatalf("expected 1 published event, got %d", len(r.published))
+	}
+}
+
+type initErrInterceptor struct{ name string }
+
+func (i *initErrInterceptor) Name() string { return i.name }
+func (i *initErrInterceptor) Init() error  { return errors.New("init failed: " + i.name) }
+func (i *initErrInterceptor) Close() error { return errors.New("close failed: " + i.name) }
+
+func TestChain_InitAll_Error(t *testing.T) {
+	chain := NewInterceptorChain()
+	chain.Register(&initErrInterceptor{name: "err-interceptor"})
+	if err := chain.InitAll(); err == nil {
+		t.Fatal("expected error from InitAll")
+	}
+}
+
+func TestChain_CloseAll_Error(t *testing.T) {
+	chain := NewInterceptorChain()
+	chain.Register(&initErrInterceptor{name: "err-interceptor"})
+	if err := chain.CloseAll(); err == nil {
+		t.Fatal("expected error from CloseAll")
+	}
+}

@@ -12,6 +12,14 @@ import (
 	"github.com/yuerrd/dmqtt/internal/cluster"
 )
 
+// extractPort parses the port number from a "host:port" address string.
+func extractPort(addr string) int {
+	parts := strings.Split(addr, ":")
+	var port int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &port)
+	return port
+}
+
 type mockChecker struct {
 	ready bool
 }
@@ -638,5 +646,438 @@ func TestStats_Enhanced(t *testing.T) {
 		if _, ok := body[f]; !ok {
 			t.Errorf("missing field %q in /stats response", f)
 		}
+	}
+}
+
+// mockClusterAPI implements ClusterAPI for tests.
+type mockClusterAPI struct {
+	self    cluster.NodeInfo
+	members []cluster.NodeInfo
+}
+
+func (m *mockClusterAPI) Self() cluster.NodeInfo    { return m.self }
+func (m *mockClusterAPI) Members() []cluster.NodeInfo { return m.members }
+
+func TestNodesEndpoint_WithCluster(t *testing.T) {
+	mock := &mockClusterAPI{
+		self: cluster.NodeInfo{ID: "node-1", Host: "localhost", GossipPort: 7946},
+		members: []cluster.NodeInfo{
+			{ID: "node-1", Host: "localhost", GossipPort: 7946},
+			{ID: "node-2", Host: "192.168.1.2", GossipPort: 7946},
+		},
+	}
+	srv := New(":0", nil)
+	srv.SetClusterAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["self"] != "node-1" {
+		t.Errorf("self = %v, want node-1", body["self"])
+	}
+	nodes := body["nodes"].([]interface{})
+	if len(nodes) != 2 {
+		t.Errorf("nodes = %d, want 2", len(nodes))
+	}
+}
+
+func TestSetAPIKey_Unauthorized(t *testing.T) {
+	srv := New(":0", nil)
+	srv.SetAPIKey("secret-key")
+	srv.SetBrokerAPI(&mockBrokerAPI{clientIDs: []string{"c1"}})
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	// No API key → 401
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestSetAPIKey_QueryParam(t *testing.T) {
+	srv := New(":0", nil)
+	srv.SetAPIKey("secret-key")
+	srv.SetBrokerAPI(&mockBrokerAPI{clientIDs: []string{"c1"}})
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices?api_key=secret-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestSetAPIKey_Header(t *testing.T) {
+	srv := New(":0", nil)
+	srv.SetAPIKey("secret-key")
+	srv.SetBrokerAPI(&mockBrokerAPI{clientIDs: []string{"c1"}})
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("GET", "http://"+srv.Addr()+"/api/v1/devices", nil)
+	req.Header.Set("X-API-Key", "secret-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestSetAPIKey_WrongKey(t *testing.T) {
+	srv := New(":0", nil)
+	srv.SetAPIKey("secret-key")
+	srv.SetBrokerAPI(&mockBrokerAPI{clientIDs: []string{"c1"}})
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("GET", "http://"+srv.Addr()+"/api/v1/devices", nil)
+	req.Header.Set("X-API-Key", "wrong-key")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDevicesList_NoBrokerAPI(t *testing.T) {
+	srv := New(":0", nil)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestDeviceDetail_NoBrokerAPI(t *testing.T) {
+	srv := New(":0", nil)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/devices/unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestMigrations_NoCoordinator(t *testing.T) {
+	srv := New(":0", nil)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestMigrations_MethodNotAllowed(t *testing.T) {
+	coord := cluster.NewMigrationCoordinator(3)
+	srv := New(":0", nil)
+	srv.SetMigrationCoordinator(coord)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	req, _ := http.NewRequest("DELETE", "http://"+srv.Addr()+"/api/v1/cluster/migrations", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestAddr_BeforeStart(t *testing.T) {
+	srv := New(":0", nil)
+	if addr := srv.Addr(); addr != "" {
+		t.Errorf("Addr() before Start() = %q, want empty", addr)
+	}
+}
+
+func TestHandleClusterDevices_NoCluster(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["total"].(float64) != 3 {
+		t.Errorf("total = %v, want 3", body["total"])
+	}
+}
+
+func TestHandleClusterDevices_WithClusterNoRemotes(t *testing.T) {
+	mock := newTestMock()
+	// Members with HTTPPort=0 so no remote fetches happen
+	clusterMock := &mockClusterAPI{
+		self: cluster.NodeInfo{ID: "node-1", Host: "localhost"},
+		members: []cluster.NodeInfo{
+			{ID: "node-1", Host: "localhost", HTTPPort: 0},
+		},
+	}
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	srv.SetClusterAPI(clusterMock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if int(body["total"].(float64)) != 3 {
+		t.Errorf("total = %v, want 3", body["total"])
+	}
+	if body["self"] != "node-1" {
+		t.Errorf("self = %v, want node-1", body["self"])
+	}
+}
+
+func TestHandleClusterStats_NoCluster(t *testing.T) {
+	mock := newTestMock()
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["total_connections"].(float64) != 3 {
+		t.Errorf("total_connections = %v, want 3", body["total_connections"])
+	}
+}
+
+func TestHandleClusterStats_WithClusterNoRemotes(t *testing.T) {
+	mock := newTestMock()
+	clusterMock := &mockClusterAPI{
+		self: cluster.NodeInfo{ID: "node-1", Host: "localhost"},
+		members: []cluster.NodeInfo{
+			{ID: "node-1", Host: "localhost", HTTPPort: 0},
+		},
+	}
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(mock)
+	srv.SetClusterAPI(clusterMock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	if body["self"] != "node-1" {
+		t.Errorf("self = %v, want node-1", body["self"])
+	}
+	nodes := body["nodes"].([]interface{})
+	if len(nodes) != 1 {
+		t.Errorf("expected 1 node stats entry, got %d", len(nodes))
+	}
+}
+
+func TestHandleClusterDevices_FetchRemoteDevices(t *testing.T) {
+	// Start a "remote" server acting as the second node
+	remoteMock := &mockBrokerAPI{
+		clientIDs: []string{"remote-dev"},
+		clientInfos: map[string]*broker.ClientInfo{
+			"remote-dev": {
+				ClientID:        "remote-dev",
+				Username:        "u",
+				RemoteAddr:      "1.2.3.4:1234",
+				ProtocolVersion: 4,
+				ConnectedAt:     time.Now(),
+				KeepAlive:       60 * time.Second,
+			},
+		},
+	}
+	remoteSrv := New(":0", nil)
+	remoteSrv.SetBrokerAPI(remoteMock)
+	if err := remoteSrv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer remoteSrv.Stop()
+
+	// Parse the remote port
+	remotePort := extractPort(remoteSrv.Addr())
+
+	// Local server with cluster API pointing to the remote
+	localMock := newTestMock()
+	clusterMock := &mockClusterAPI{
+		self: cluster.NodeInfo{ID: "node-1", Host: "127.0.0.1"},
+		members: []cluster.NodeInfo{
+			{ID: "node-1", Host: "127.0.0.1", HTTPPort: 0}, // self, skip
+			{ID: "node-2", Host: "127.0.0.1", HTTPPort: remotePort},
+		},
+	}
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(localMock)
+	srv.SetClusterAPI(clusterMock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/devices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	// 3 local + 1 remote
+	if int(body["total"].(float64)) != 4 {
+		t.Errorf("total = %v, want 4", body["total"])
+	}
+}
+
+func TestHandleClusterStats_FetchRemoteStats(t *testing.T) {
+	// Start a "remote" server acting as the second node
+	remoteMock := &mockBrokerAPI{clientIDs: []string{"remote-dev-1", "remote-dev-2"}}
+	remoteSrv := New(":0", nil)
+	remoteSrv.SetBrokerAPI(remoteMock)
+	if err := remoteSrv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer remoteSrv.Stop()
+
+	// Parse the remote port
+	remotePort := extractPort(remoteSrv.Addr())
+
+	localMock := newTestMock() // 3 clients
+	clusterMock := &mockClusterAPI{
+		self: cluster.NodeInfo{ID: "node-1", Host: "127.0.0.1"},
+		members: []cluster.NodeInfo{
+			{ID: "node-1", Host: "127.0.0.1", HTTPPort: 0},
+			{ID: "node-2", Host: "127.0.0.1", HTTPPort: remotePort},
+		},
+	}
+	srv := New(":0", nil)
+	srv.SetBrokerAPI(localMock)
+	srv.SetClusterAPI(clusterMock)
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Stop()
+
+	resp, err := http.Get("http://" + srv.Addr() + "/api/v1/cluster/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	// 3 local + 2 remote = 5
+	if int(body["total_connections"].(float64)) != 5 {
+		t.Errorf("total_connections = %v, want 5", body["total_connections"])
+	}
+	nodes := body["nodes"].([]interface{})
+	if len(nodes) != 2 {
+		t.Errorf("nodes = %d, want 2", len(nodes))
 	}
 }

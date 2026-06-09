@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/cockroachdb/pebble v1.1.5
+	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/google/cel-go v0.28.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/memberlist v0.5.4
@@ -28,7 +29,6 @@ require (
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
